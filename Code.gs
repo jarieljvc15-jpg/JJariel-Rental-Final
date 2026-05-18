@@ -8,7 +8,7 @@
 // ---------------------------------------------------------------------------
 // CONFIGURATION — set your Spreadsheet ID here after creating the Sheets file
 // ---------------------------------------------------------------------------
-var SPREADSHEET_ID = 'YOUR_SPREADSHEET_ID_HERE';
+var SPREADSHEET_ID = '1ONL_RJ99j-pfmGJvt034-LWzGyxJca_2GZrIruQfgI4';
 
 // Sheet tab names — must match exactly what you create in Google Sheets
 var SHEET = {
@@ -17,7 +17,8 @@ var SHEET = {
   BILLING:  'Billing',
   PAYMENTS: 'Payments',
   RECEIPTS: 'Receipts',
-  READINGS: 'Readings'
+  READINGS: 'Readings',
+  LEDGER:   'Ledger'
 };
 
 // ---------------------------------------------------------------------------
@@ -40,16 +41,20 @@ function doPost(e) {
       case 'getLedger':           return getLedger(body);
       case 'submitPayment':       return submitPayment(body);
       case 'logPayment':          return logPayment(body);
+      case 'logFlexiblePayment':  return logFlexiblePayment(body);
       case 'approvePayment':      return approvePayment(body);
       case 'rejectPayment':       return rejectPayment(body);
       case 'addTenant':           return addTenant(body);
       case 'updateTenant':        return updateTenant(body);
       case 'enterMeterReadings':  return enterMeterReadings(body);
       case 'getDashboardData':    return getDashboardData(body);
-      case 'getAllTenants':        return getAllTenants(body);
-      case 'getPendingPayments':  return getPendingPayments(body);
-      case 'generateReceipt':     return generateReceipt(body);
-      default:                    return respond(false, null, 'Unknown action: ' + action);
+      case 'getAllTenants':           return getAllTenants(body);
+      case 'getPendingPayments':      return getPendingPayments(body);
+      case 'getAllPayments':          return getAllPayments(body);
+      case 'generateReceipt':        return generateReceipt(body);
+      case 'getTenantCreditBalance':  return getTenantCreditBalance(body);
+      case 'triggerRemindersNow':     return triggerRemindersNow(body);
+      default:                        return respond(false, null, 'Unknown action: ' + action);
     }
   } catch (err) {
     return respond(false, null, 'Server error: ' + err.message);
@@ -74,10 +79,22 @@ function getSheet(name) {
   return getSpreadsheet().getSheetByName(name);
 }
 
-// Returns all rows of a sheet as an array of objects keyed by the header row
-function sheetToObjects(sheetName) {
+// ---------------------------------------------------------------------------
+// getSheetData — returns the full 2D array for a named sheet (header row
+// included at index 0). Use this instead of repeated getDataRange calls so
+// each endpoint does exactly ONE Sheets read per tab.
+// ---------------------------------------------------------------------------
+function getSheetData(sheetName) {
   var sheet = getSheet(sheetName);
-  var data  = sheet.getDataRange().getValues();
+  if (!sheet) return [];
+  var data = sheet.getDataRange().getValues();
+  return data; // row 0 = headers, rows 1..n = data
+}
+
+// Returns all rows of a sheet as an array of objects keyed by the header row.
+// Accepts an optional pre-fetched 2D array to avoid a second read.
+function sheetToObjects(sheetName, rawData) {
+  var data = rawData || getSheetData(sheetName);
   if (data.length < 2) return [];
   var headers = data[0];
   var rows    = [];
@@ -109,9 +126,9 @@ function updateRow(sheetName, rowIndex, obj) {
 
 // Finds the sheet row index (1-based, including header) of the first object
 // matching predicate fn(obj) => bool. Returns -1 if not found.
-function findRowIndex(sheetName, fn) {
-  var sheet = getSheet(sheetName);
-  var data  = sheet.getDataRange().getValues();
+// Accepts an optional pre-fetched 2D array to avoid a redundant read.
+function findRowIndex(sheetName, fn, rawData) {
+  var data = rawData || getSheetData(sheetName);
   if (data.length < 2) return -1;
   var headers = data[0];
   for (var i = 1; i < data.length; i++) {
@@ -229,7 +246,9 @@ function getTenantInfo(body) {
     ? payments.sort(function(a,b){ return b.date < a.date ? -1 : 1; })[0]
     : null;
 
-  return respond(true, { tenant: tenant, billing: billing, last_payment: lastPayment });
+  var credit = getTenantCredit(tenant.tenant_id);
+
+  return respond(true, { tenant: tenant, billing: billing, last_payment: lastPayment, credit: credit });
 }
 
 // ---------------------------------------------------------------------------
@@ -269,17 +288,36 @@ function getPaymentHistory(body) {
     tenantId = body.tenant_id;
   }
 
-  var rows = sheetToObjects(SHEET.PAYMENTS).filter(function(p) {
+  var rawPayments = getSheetData(SHEET.PAYMENTS);
+  var rawReceipts = getSheetData(SHEET.RECEIPTS);
+  var tz2 = Session.getScriptTimeZone();
+  function fmtD(v) {
+    if (!v) return '';
+    if (v instanceof Date) return Utilities.formatDate(v, tz2, 'yyyy-MM-dd');
+    return String(v);
+  }
+
+  var rows = sheetToObjects(SHEET.PAYMENTS, rawPayments).filter(function(p) {
     return String(p.tenant_id) === String(tenantId);
-  }).sort(function(a,b){ return a.date < b.date ? 1 : -1; });
+  }).sort(function(a, b) {
+    var da = fmtD(a.date), db = fmtD(b.date);
+    return da < db ? 1 : -1;
+  });
+
+  // Normalise date fields to strings before sending to frontend
+  rows = rows.map(function(p) {
+    p.date          = fmtD(p.date);
+    p.approved_date = fmtD(p.approved_date);
+    return p;
+  });
 
   // Attach receipt snapshot if available
-  var receipts = sheetToObjects(SHEET.RECEIPTS);
+  var receipts = sheetToObjects(SHEET.RECEIPTS, rawReceipts);
   rows = rows.map(function(p) {
     var receipt = receipts.find(function(r) {
       return String(r.payment_id) === String(p.payment_id);
     });
-    p.receipt = receipt ? JSON.parse(receipt.receipt_snapshot || '{}') : null;
+    p.receipt    = receipt ? JSON.parse(receipt.receipt_snapshot || '{}') : null;
     p.receipt_no = receipt ? receipt.receipt_no : null;
     return p;
   });
@@ -295,11 +333,16 @@ function getPaymentHistory(body) {
 function getLedger(body) {
   if (!validateAdmin(body)) return respond(false, null, 'Unauthorized');
 
-  var tenants  = sheetToObjects(SHEET.TENANTS).filter(function(t) {
+  // Batch all reads up front
+  var rawTenants  = getSheetData(SHEET.TENANTS);
+  var rawBillings = getSheetData(SHEET.BILLING);
+  var rawPayments = getSheetData(SHEET.PAYMENTS);
+
+  var tenants  = sheetToObjects(SHEET.TENANTS,  rawTenants).filter(function(t) {
     return t.status === 'active' || t.status === 'moved-out';
   });
-  var billings  = sheetToObjects(SHEET.BILLING);
-  var payments  = sheetToObjects(SHEET.PAYMENTS).filter(function(p) {
+  var billings = sheetToObjects(SHEET.BILLING,  rawBillings);
+  var payments = sheetToObjects(SHEET.PAYMENTS, rawPayments).filter(function(p) {
     return p.status === 'approved';
   });
 
@@ -357,67 +400,135 @@ function getLedger(body) {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // ACTION: getDashboardData
 // Returns admin dashboard summary: collections, pending approvals, overdue,
 // occupancy, and recent payment feed. Admin only.
 // ---------------------------------------------------------------------------
+
+// Safely converts a value that may be a Date object, a date string, or
+// a Sheets serial number into a "YYYY-MM" string for month comparison.
+function dateToYYYYMM(val) {
+  if (!val) return '';
+  // Already a JS Date object (what Sheets returns for date-formatted cells)
+  if (val instanceof Date) {
+    var y = val.getFullYear();
+    var m = String(val.getMonth() + 1).padStart(2, '0');
+    return y + '-' + m;
+  }
+  var s = String(val).trim();
+  // Already ISO "YYYY-MM-DD" or "YYYY-MM"
+  if (/^\d{4}-\d{2}/.test(s)) return s.substr(0, 7);
+  // Sheets sometimes gives "MM/DD/YYYY"
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}/.test(s)) {
+    var parts = s.split('/');
+    return parts[2] + '-' + String(parts[0]).padStart(2, '0');
+  }
+  return '';
+}
+
 function getDashboardData(body) {
   if (!validateAdmin(body)) return respond(false, null, 'Unauthorized');
 
   var cfg      = loadConfig();
-  var month    = body.month || currentMonth();
-  var tenants  = sheetToObjects(SHEET.TENANTS);
-  var billings  = sheetToObjects(SHEET.BILLING);
-  var payments  = sheetToObjects(SHEET.PAYMENTS);
+  var month    = body.month || currentMonth(); // "YYYY-MM"
 
-  var active      = tenants.filter(function(t){ return t.status === 'active'; });
-  var movedOut    = tenants.filter(function(t){ return t.status === 'moved-out'; });
-  var occupancy   = active.length;
-  var totalUnits  = tenants.length - movedOut.length;  // rough unit count
+  // Batch all sheet reads up front — one read per tab
+  var rawTenants  = getSheetData(SHEET.TENANTS);
+  var rawBillings = getSheetData(SHEET.BILLING);
+  var rawPayments = getSheetData(SHEET.PAYMENTS);
 
-  // This-month collections (approved payments this month)
-  var monthPayments = payments.filter(function(p) {
-    return p.status === 'approved'
-        && String(p.date).substr(0,7) === String(month);
+  var tenants  = sheetToObjects(SHEET.TENANTS,  rawTenants);
+  var billings = sheetToObjects(SHEET.BILLING,  rawBillings);
+  var payments = sheetToObjects(SHEET.PAYMENTS, rawPayments);
+
+  var active   = tenants.filter(function(t){ return t.status === 'active'; });
+  var movedOut = tenants.filter(function(t){ return t.status === 'moved-out'; });
+  var occupancy = active.length;
+
+  // ── Collected this month — TWO figures ──────────────────────────────────
+  // Approved payments only
+  var approvedPayments = payments.filter(function(p) {
+    return String(p.status).toLowerCase() === 'approved';
   });
-  var collected = monthPayments.reduce(function(s,p){ return s + (parseFloat(p.amount)||0); }, 0);
+
+  // By payment date (the date the tenant/admin recorded the payment)
+  var collectedByPaymentDate = approvedPayments
+    .filter(function(p) { return dateToYYYYMM(p.date) === String(month); })
+    .reduce(function(s, p) { return s + (parseFloat(p.amount) || 0); }, 0);
+
+  // By approval date (the date admin approved / logged it)
+  var collectedByLoggedDate = approvedPayments
+    .filter(function(p) { return dateToYYYYMM(p.approved_date) === String(month); })
+    .reduce(function(s, p) { return s + (parseFloat(p.amount) || 0); }, 0);
+
+  // Keep legacy collected_month (by payment date) for any other consumers
+  var collected = collectedByPaymentDate;
 
   // Pending approvals
-  var pending = payments.filter(function(p){ return p.status === 'pending'; });
+  var pending = payments.filter(function(p) {
+    return String(p.status).toLowerCase() === 'pending';
+  });
 
   // Overdue: active tenants with an unpaid/partial billing row for a past month
   var now = currentMonth();
   var overdue = billings.filter(function(b) {
     return b.month < now
         && (b.status === 'unpaid' || b.status === 'partial')
-        && tenants.find(function(t){ return String(t.tenant_id)===String(b.tenant_id) && t.status==='active'; });
+        && tenants.find(function(t) {
+             return String(t.tenant_id) === String(b.tenant_id) && t.status === 'active';
+           });
   });
-  var overdueIds = [...new Set(overdue.map(function(b){ return b.tenant_id; }))];
+  var overdueIds = [];
+  overdue.forEach(function(b) {
+    if (overdueIds.indexOf(b.tenant_id) === -1) overdueIds.push(b.tenant_id);
+  });
 
-  // Recent activity: last 10 approved + pending payments
+  // Recent activity: last 10 payments of any status, newest first
+  var tz = Session.getScriptTimeZone();
+  function fmtDate(v) {
+    if (!v) return '';
+    if (v instanceof Date) return Utilities.formatDate(v, tz, 'yyyy-MM-dd');
+    return String(v);
+  }
+
   var recent = payments
-    .sort(function(a,b){ return a.date < b.date ? 1 : -1; })
+    .slice()
+    .sort(function(a, b) {
+      var da = fmtDate(a.date);
+      var db = fmtDate(b.date);
+      return da < db ? 1 : da > db ? -1 : 0;
+    })
     .slice(0, 10)
     .map(function(p) {
-      var t = tenants.find(function(t){ return String(t.tenant_id)===String(p.tenant_id); });
+      var t = tenants.find(function(t) { return String(t.tenant_id) === String(p.tenant_id); });
       return {
-        payment_id:  p.payment_id,
-        tenant_name: t ? t.name : 'Unknown',
-        unit:        t ? t.unit : '',
-        date:        p.date,
-        amount:      p.amount,
-        method:      p.method,
-        status:      p.status
+        payment_id:    p.payment_id,
+        tenant_name:   t ? t.name : 'Unknown',
+        tenant_code:   t ? t.login_code : '',
+        unit:          t ? t.unit : '',
+        date:          fmtDate(p.date),
+        amount:        p.amount,
+        method:        p.method,
+        reference_no:  p.reference_no  || '',
+        proof_url:     p.proof_url     || '',
+        status:        p.status,
+        note:          p.note          || '',
+        approved_by:   p.approved_by   || '',
+        approved_date: fmtDate(p.approved_date),
+        billing_id:    p.billing_id    || ''
       };
     });
 
   return respond(true, {
-    month:             month,
-    collected_month:   collected,
-    pending_count:     pending.length,
-    overdue_count:     overdueIds.length,
-    occupancy:         occupancy,
-    recent_payments:   recent
+    month:                    month,
+    collected_month:          collected,           // legacy key kept
+    collected_by_payment_date: collectedByPaymentDate,
+    collected_by_logged_date:  collectedByLoggedDate,
+    pending_count:            pending.length,
+    overdue_count:            overdueIds.length,
+    occupancy:                occupancy,
+    recent_payments:          recent
   });
 }
 
@@ -428,8 +539,11 @@ function getDashboardData(body) {
 function getPendingPayments(body) {
   if (!validateAdmin(body)) return respond(false, null, 'Unauthorized');
 
-  var tenants  = sheetToObjects(SHEET.TENANTS);
-  var payments = sheetToObjects(SHEET.PAYMENTS)
+  var rawTenants  = getSheetData(SHEET.TENANTS);
+  var rawPayments = getSheetData(SHEET.PAYMENTS);
+
+  var tenants  = sheetToObjects(SHEET.TENANTS,  rawTenants);
+  var payments = sheetToObjects(SHEET.PAYMENTS, rawPayments)
     .filter(function(p){ return p.status === 'pending'; })
     .sort(function(a,b){ return a.date < b.date ? 1 : -1; });
 
@@ -440,6 +554,63 @@ function getPendingPayments(body) {
       unit:        t ? t.unit : ''
     });
   });
+
+  return respond(true, result);
+}
+
+// ---------------------------------------------------------------------------
+// ACTION: getAllPayments
+// Returns ALL payment rows joined with tenant name/unit, newest first.
+// Admin only. Used by the full Transaction Log tab.
+// ---------------------------------------------------------------------------
+function getAllPayments(body) {
+  if (!validateAdmin(body)) return respond(false, null, 'Unauthorized');
+
+  var rawTenants  = getSheetData(SHEET.TENANTS);
+  var rawPayments = getSheetData(SHEET.PAYMENTS);
+
+  var tenants  = sheetToObjects(SHEET.TENANTS,  rawTenants);
+  var payments = sheetToObjects(SHEET.PAYMENTS, rawPayments);
+
+  var result = payments
+    .sort(function(a, b) {
+      var da = dateToYYYYMM(a.date) + Utilities.formatDate(
+        a.date instanceof Date ? a.date : new Date(a.date), Session.getScriptTimeZone(), 'yyyy-MM-dd'
+      );
+      var db = dateToYYYYMM(b.date) + Utilities.formatDate(
+        b.date instanceof Date ? b.date : new Date(b.date), Session.getScriptTimeZone(), 'yyyy-MM-dd'
+      );
+      return da < db ? 1 : da > db ? -1 : 0;
+    })
+    .map(function(p) {
+      var t = tenants.find(function(t) {
+        return String(t.tenant_id) === String(p.tenant_id);
+      });
+      // Format date fields — Sheets returns them as Date objects
+      var tz = Session.getScriptTimeZone();
+      function fmtDate(v) {
+        if (!v) return '';
+        if (v instanceof Date) return Utilities.formatDate(v, tz, 'yyyy-MM-dd');
+        return String(v);
+      }
+      return {
+        payment_id:    p.payment_id,
+        tenant_id:     p.tenant_id,
+        tenant_name:   t ? t.name       : 'Unknown',
+        tenant_code:   t ? t.login_code : '',
+        unit:          t ? t.unit       : '',
+        billing_id:    p.billing_id    || '',
+        date:          fmtDate(p.date),
+        amount:        parseFloat(p.amount)  || 0,
+        method:        p.method        || '',
+        reference_no:  p.reference_no  || '',
+        proof_url:     p.proof_url     || '',
+        status:        p.status        || '',
+        note:          p.note          || '',
+        approved_by:   p.approved_by   || '',
+        approved_date: fmtDate(p.approved_date)
+      };
+    });
 
   return respond(true, result);
 }
@@ -488,7 +659,8 @@ function logPayment(body) {
   lock.waitLock(10000);
   try {
     var cfg    = loadConfig();
-    var tenant = sheetToObjects(SHEET.TENANTS).find(function(t){
+    var rawTenants = getSheetData(SHEET.TENANTS);
+    var tenant = sheetToObjects(SHEET.TENANTS, rawTenants).find(function(t){
       return String(t.tenant_id) === String(body.tenant_id);
     });
     if (!tenant) return respond(false, null, 'Tenant not found');
@@ -531,9 +703,148 @@ function logPayment(body) {
 }
 
 // ---------------------------------------------------------------------------
-// ACTION: approvePayment
-// Admin approves a pending tenant submission. Triggers receipt + email.
+// INTERNAL: getTenantCredit
+// Returns the sum of unused (unspent) credit rows in the Ledger sheet
+// for a given tenant_id. Credit rows have type='Credit' and spent=false/blank.
 // ---------------------------------------------------------------------------
+function getTenantCredit(tenantId, rawLedger) {
+  var rows = rawLedger
+    ? sheetToObjects(SHEET.LEDGER, rawLedger)
+    : sheetToObjects(SHEET.LEDGER);
+  var total = 0;
+  rows.forEach(function(r) {
+    if (String(r.tenant_id) === String(tenantId) &&
+        r.type === 'Credit' &&
+        (!r.spent || String(r.spent).toLowerCase() === 'false' || r.spent === false)) {
+      total += parseFloat(r.amount) || 0;
+    }
+  });
+  return total;
+}
+
+// ---------------------------------------------------------------------------
+// ACTION: logFlexiblePayment
+// Admin logs a payment that can span multiple billing periods (oldest-first
+// allocation). Any excess beyond the selected periods is saved as a credit
+// row in the Ledger sheet.
+// ---------------------------------------------------------------------------
+function logFlexiblePayment(body) {
+  if (!validateAdmin(body)) return respond(false, null, 'Unauthorized');
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    var cfg    = loadConfig();
+    var amount = parseFloat(body.amount) || 0;
+    if (amount <= 0) return respond(false, null, 'Amount must be greater than zero');
+
+    var rawTenants = getSheetData(SHEET.TENANTS);
+    var tenant = sheetToObjects(SHEET.TENANTS, rawTenants).find(function(t) {
+      return String(t.tenant_id) === String(body.tenant_id);
+    });
+    if (!tenant) return respond(false, null, 'Tenant not found');
+
+    var selectedPeriods = body.selected_periods || []; // array of billing_ids, oldest first
+    var remaining = amount;
+    var receipts  = [];
+
+    // ── Allocate across selected billing periods ──────────────────────────
+    selectedPeriods.forEach(function(billingId) {
+      if (remaining <= 0) return;
+
+      var rawBillings = getSheetData(SHEET.BILLING);
+      var billings    = sheetToObjects(SHEET.BILLING, rawBillings);
+      var billing     = billings.find(function(b) {
+        return String(b.billing_id) === String(billingId);
+      });
+      if (!billing) return;
+
+      var balance = parseFloat(billing.balance) || 0;
+      if (balance <= 0) return; // already paid, skip
+
+      var payForThis = Math.min(remaining, balance);
+      remaining -= payForThis;
+
+      // Write payment row
+      var paymentId = genId('PAY');
+      var payDate   = body.date || today();
+      var record = {
+        payment_id:    paymentId,
+        tenant_id:     tenant.tenant_id,
+        billing_id:    billingId,
+        date:          payDate,
+        amount:        payForThis,
+        method:        body.method || '',
+        reference_no:  body.reference_no || '',
+        proof_url:     '',
+        status:        'approved',
+        note:          body.note || 'Admin logged (flexible)',
+        approved_by:   'admin',
+        approved_date: today()
+      };
+      appendRow(SHEET.PAYMENTS, record);
+
+      // Update billing row
+      var updatedBilling = updateBillingAfterPayment(billingId, payForThis, cfg);
+
+      // Build receipt
+      var receipt = buildAndSaveReceipt(paymentId, tenant, updatedBilling, record, cfg);
+      receipts.push(receipt);
+    });
+
+    // ── Write excess as credit in Ledger ─────────────────────────────────
+    var creditWritten = 0;
+    if (remaining > 0) {
+      var ledgerSheet = getSheet(SHEET.LEDGER);
+      if (!ledgerSheet) {
+        // Create the sheet if it doesn't exist yet
+        getSpreadsheet().insertSheet(SHEET.LEDGER);
+        ledgerSheet = getSheet(SHEET.LEDGER);
+        ledgerSheet.appendRow(['ledger_id','tenant_id','date','type','amount','note','spent']);
+      }
+      var ledgerId = genId('LDG');
+      ledgerSheet.appendRow([
+        ledgerId,
+        tenant.tenant_id,
+        today(),
+        'Credit',
+        remaining,
+        'Advance payment',
+        false
+      ]);
+      creditWritten = remaining;
+    }
+
+    // ── Send receipt email (for the last receipt if any) ─────────────────
+    var emailResult = { emailSent: false, reason: 'no_receipts' };
+    if (receipts.length > 0) {
+      emailResult = sendReceiptEmail(tenant, receipts[receipts.length - 1], cfg);
+    }
+
+    return respond(true, {
+      tenant_id:      tenant.tenant_id,
+      amount_applied: amount - remaining,
+      credit_written: creditWritten,
+      receipts:       receipts,
+      emailSent:      emailResult.emailSent,
+      emailNote:      emailResult.reason || ''
+    });
+
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ACTION: getTenantCreditBalance
+// Returns total unused credit for a tenant. Used by tenant dashboard.
+// ---------------------------------------------------------------------------
+function getTenantCreditBalance(body) {
+  var tenant = validateTenant(body);
+  if (!tenant) return respond(false, null, 'Invalid tenant code');
+  var credit = getTenantCredit(tenant.tenant_id);
+  return respond(true, { credit: credit });
+}
 function approvePayment(body) {
   if (!validateAdmin(body)) return respond(false, null, 'Unauthorized');
 
@@ -542,13 +853,17 @@ function approvePayment(body) {
   try {
     var cfg = loadConfig();
 
+    // Single read per sheet up front
+    var rawPayments = getSheetData(SHEET.PAYMENTS);
+    var rawTenants  = getSheetData(SHEET.TENANTS);
+
     // Find the payment row
     var rowIdx = findRowIndex(SHEET.PAYMENTS, function(p){
       return String(p.payment_id) === String(body.payment_id);
-    });
+    }, rawPayments);
     if (rowIdx === -1) return respond(false, null, 'Payment not found');
 
-    var payments = sheetToObjects(SHEET.PAYMENTS);
+    var payments = sheetToObjects(SHEET.PAYMENTS, rawPayments);
     var payment  = payments.find(function(p){
       return String(p.payment_id) === String(body.payment_id);
     });
@@ -562,7 +877,7 @@ function approvePayment(body) {
     updateRow(SHEET.PAYMENTS, rowIdx, payment);
 
     // Find tenant
-    var tenant = sheetToObjects(SHEET.TENANTS).find(function(t){
+    var tenant = sheetToObjects(SHEET.TENANTS, rawTenants).find(function(t){
       return String(t.tenant_id) === String(payment.tenant_id);
     });
     if (!tenant) return respond(false, null, 'Tenant not found');
@@ -594,12 +909,13 @@ function rejectPayment(body) {
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
+    var rawPayments = getSheetData(SHEET.PAYMENTS);
     var rowIdx = findRowIndex(SHEET.PAYMENTS, function(p){
       return String(p.payment_id) === String(body.payment_id);
-    });
+    }, rawPayments);
     if (rowIdx === -1) return respond(false, null, 'Payment not found');
 
-    var payments = sheetToObjects(SHEET.PAYMENTS);
+    var payments = sheetToObjects(SHEET.PAYMENTS, rawPayments);
     var payment  = payments.find(function(p){
       return String(p.payment_id) === String(body.payment_id);
     });
@@ -670,12 +986,13 @@ function updateTenant(body) {
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
+    var rawTenants = getSheetData(SHEET.TENANTS);
     var rowIdx = findRowIndex(SHEET.TENANTS, function(t){
       return String(t.tenant_id) === String(body.tenant_id);
-    });
+    }, rawTenants);
     if (rowIdx === -1) return respond(false, null, 'Tenant not found');
 
-    var tenants = sheetToObjects(SHEET.TENANTS);
+    var tenants = sheetToObjects(SHEET.TENANTS, rawTenants);
     var tenant  = tenants.find(function(t){
       return String(t.tenant_id) === String(body.tenant_id);
     });
@@ -713,9 +1030,14 @@ function enterMeterReadings(body) {
     var lateFeeAmt   = parseFloat(cfg.late_fee_amount) || 0;
     var lateFeeType  = cfg.late_fee_type || 'fixed';
 
-    var allReadings  = sheetToObjects(SHEET.READINGS);
-    var allBillings  = sheetToObjects(SHEET.BILLING);
-    var allTenants   = sheetToObjects(SHEET.TENANTS);
+    // Batch all reads before the loop — one read per sheet total
+    var rawReadings = getSheetData(SHEET.READINGS);
+    var rawBillings = getSheetData(SHEET.BILLING);
+    var rawTenants  = getSheetData(SHEET.TENANTS);
+
+    var allReadings = sheetToObjects(SHEET.READINGS, rawReadings);
+    var allBillings = sheetToObjects(SHEET.BILLING,  rawBillings);
+    var allTenants  = sheetToObjects(SHEET.TENANTS,  rawTenants);
 
     var results = [];
 
@@ -768,9 +1090,11 @@ function enterMeterReadings(body) {
 
       var existingReadingIdx = findRowIndex(SHEET.READINGS, function(r){
         return String(r.tenant_id)===tid && String(r.month)===month;
-      });
+      }, rawReadings);
       if (existingReadingIdx === -1) {
         appendRow(SHEET.READINGS, readingRow);
+        // keep rawReadings in sync so subsequent iterations see the new row
+        rawReadings = getSheetData(SHEET.READINGS);
       } else {
         readingRow.reading_id = allReadings.find(function(r){
           return String(r.tenant_id)===tid && String(r.month)===month;
@@ -802,9 +1126,10 @@ function enterMeterReadings(body) {
 
       var existingBillingIdx = findRowIndex(SHEET.BILLING, function(b){
         return String(b.tenant_id)===tid && String(b.month)===month;
-      });
+      }, rawBillings);
       if (existingBillingIdx === -1) {
         appendRow(SHEET.BILLING, billingRow);
+        rawBillings = getSheetData(SHEET.BILLING); // re-sync for next iteration
       } else {
         // Preserve amount_paid if re-entering readings after partial payment
         var existing = allBillings.find(function(b){
@@ -847,7 +1172,6 @@ function enterMeterReadings(body) {
 // Builds (or re-fetches) a receipt for a given payment_id. Admin or tenant.
 // ---------------------------------------------------------------------------
 function generateReceipt(body) {
-  // Allow tenant or admin access
   var cfg = loadConfig();
   var authed = false;
   if (body.login_code) {
@@ -858,7 +1182,9 @@ function generateReceipt(body) {
   }
   if (!authed) return respond(false, null, 'Unauthorized');
 
-  var receipts = sheetToObjects(SHEET.RECEIPTS);
+  // Batch reads
+  var rawReceipts = getSheetData(SHEET.RECEIPTS);
+  var receipts = sheetToObjects(SHEET.RECEIPTS, rawReceipts);
   var existing = receipts.find(function(r){
     return String(r.payment_id) === String(body.payment_id);
   });
@@ -870,18 +1196,21 @@ function generateReceipt(body) {
   }
 
   // Build fresh if not yet saved (shouldn't happen in normal flow)
-  var payments = sheetToObjects(SHEET.PAYMENTS);
+  var rawPayments = getSheetData(SHEET.PAYMENTS);
+  var payments = sheetToObjects(SHEET.PAYMENTS, rawPayments);
   var payment  = payments.find(function(p){
     return String(p.payment_id) === String(body.payment_id);
   });
   if (!payment) return respond(false, null, 'Payment not found');
 
-  var tenants = sheetToObjects(SHEET.TENANTS);
+  var rawTenants = getSheetData(SHEET.TENANTS);
+  var tenants = sheetToObjects(SHEET.TENANTS, rawTenants);
   var tenant2 = tenants.find(function(t){
     return String(t.tenant_id) === String(payment.tenant_id);
   });
 
-  var billings = sheetToObjects(SHEET.BILLING);
+  var rawBillings = getSheetData(SHEET.BILLING);
+  var billings = sheetToObjects(SHEET.BILLING, rawBillings);
   var billing  = billings.find(function(b){
     return String(b.billing_id) === String(payment.billing_id);
   }) || null;
@@ -898,12 +1227,14 @@ function generateReceipt(body) {
 function updateBillingAfterPayment(billingId, amount, cfg) {
   if (!billingId) return null;
 
+  var rawBillings = getSheetData(SHEET.BILLING);
+
   var rowIdx = findRowIndex(SHEET.BILLING, function(b){
     return String(b.billing_id) === String(billingId);
-  });
+  }, rawBillings);
   if (rowIdx === -1) return null;
 
-  var billings = sheetToObjects(SHEET.BILLING);
+  var billings = sheetToObjects(SHEET.BILLING, rawBillings);
   var billing  = billings.find(function(b){
     return String(b.billing_id) === String(billingId);
   });
@@ -967,6 +1298,176 @@ function buildAndSaveReceipt(paymentId, tenant, billing, payment, cfg) {
   });
 
   return snapshot;
+}
+
+// ---------------------------------------------------------------------------
+// ACTION: triggerRemindersNow
+// Admin-triggered manual run of the billing reminder system. Admin only.
+// ---------------------------------------------------------------------------
+function triggerRemindersNow(body) {
+  if (!validateAdmin(body)) return respond(false, null, 'Unauthorized');
+  var summary = sendMonthlyBillingReminders();
+  return respond(true, summary);
+}
+
+// ---------------------------------------------------------------------------
+// sendMonthlyBillingReminders
+// Core reminder function — can be called by a time-driven trigger or manually
+// via triggerRemindersNow. Sends billing reminder emails to all active tenants
+// who have an unpaid or partial bill for the current month.
+//
+// Config key: reminder_enabled — set to 'false' to disable without removing trigger.
+// ---------------------------------------------------------------------------
+function sendMonthlyBillingReminders() {
+  var cfg = loadConfig();
+
+  // Guard: check reminder_enabled config key
+  if (String(cfg.reminder_enabled).toLowerCase() === 'false') {
+    Logger.log('sendMonthlyBillingReminders: reminder_enabled is false — skipping.');
+    return { sent: 0, skipped: 0, failed: 0, disabled: true };
+  }
+
+  var month        = currentMonth();       // "YYYY-MM"
+  var propertyName = cfg.property_name || 'Property';
+  var dueDay       = parseInt(cfg.due_day) || 5;
+  var dueDate      = month + '-' + String(dueDay).padStart(2, '0');
+  var dueDateLabel = formatMonthLabel(month) + ' — due by the ' + ordinalGAS(dueDay);
+
+  var tz = Session.getScriptTimeZone();
+  function fmtDate(v) {
+    if (!v) return '';
+    if (v instanceof Date) return Utilities.formatDate(v, tz, 'yyyy-MM-dd');
+    return String(v);
+  }
+
+  // Batch reads — one per sheet
+  var rawTenants  = getSheetData(SHEET.TENANTS);
+  var rawBillings = getSheetData(SHEET.BILLING);
+  var tenants     = sheetToObjects(SHEET.TENANTS,  rawTenants);
+  var billings    = sheetToObjects(SHEET.BILLING,  rawBillings);
+
+  var activeTenants = tenants.filter(function(t) {
+    return String(t.status).toLowerCase() === 'active';
+  });
+
+  var sent    = 0;
+  var skipped = 0;
+  var failed  = 0;
+
+  activeTenants.forEach(function(tenant) {
+    // Find the billing row for this tenant for the current month
+    var billing = billings.find(function(b) {
+      return String(b.tenant_id) === String(tenant.tenant_id)
+          && String(b.month)     === String(month);
+    });
+
+    // No bill yet for this month — admin hasn't entered readings
+    if (!billing) {
+      Logger.log('sendMonthlyBillingReminders: No billing row for ' + tenant.name + ' (' + month + ') — skipping.');
+      skipped++;
+      return;
+    }
+
+    var billingStatus = String(billing.status).toLowerCase();
+
+    // Already paid — nothing to remind
+    if (billingStatus === 'paid') {
+      Logger.log('sendMonthlyBillingReminders: ' + tenant.name + ' already paid for ' + month + ' — skipping.');
+      skipped++;
+      return;
+    }
+
+    // Only send for unpaid or partial
+    if (billingStatus !== 'unpaid' && billingStatus !== 'partial') {
+      skipped++;
+      return;
+    }
+
+    // No email on file
+    if (!tenant.email || String(tenant.email).trim() === '') {
+      Logger.log('sendMonthlyBillingReminders: No email for ' + tenant.name + ' — skipping.');
+      skipped++;
+      return;
+    }
+
+    var balance    = parseFloat(billing.balance)    || 0;
+    var totalBill  = parseFloat(billing.total_bill) || 0;
+    var amountPaid = parseFloat(billing.amount_paid)|| 0;
+
+    var pesoFmt = function(n) {
+      return '₱' + parseFloat(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    };
+
+    var subject = propertyName + ' — Billing Reminder for ' + formatMonthLabel(month);
+
+    var partialNote = billingStatus === 'partial'
+      ? '<p style="margin:8px 0 0;font-size:13px;color:#555;">You have already paid ' + pesoFmt(amountPaid) + '. The remaining balance is <strong>' + pesoFmt(balance) + '</strong>.</p>'
+      : '';
+
+    var html = [
+      '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#333;">',
+
+      // Header
+      '<div style="background:#0e7c61;padding:24px 32px;border-radius:8px 8px 0 0;">',
+      '<h1 style="margin:0;color:#ffffff;font-size:22px;">' + propertyName + '</h1>',
+      '<p style="margin:4px 0 0;color:#b2dfcd;font-size:14px;">Monthly Billing Reminder</p>',
+      '</div>',
+
+      // Body
+      '<div style="padding:24px 32px;">',
+      '<p style="font-size:15px;">Hi <strong>' + tenant.name + '</strong>,</p>',
+      '<p style="font-size:14px;color:#555;">',
+      'This is a friendly reminder that your bill for <strong>' + formatMonthLabel(month) + '</strong> ',
+      'is currently <strong style="color:' + (billingStatus === 'partial' ? '#e67e22' : '#c0392b') + '">' + billingStatus + '</strong>.',
+      '</p>',
+
+      '<div style="background:#f9f6f0;border-radius:6px;padding:16px 20px;margin:16px 0;">',
+      '<table style="width:100%;font-size:14px;border-collapse:collapse;">',
+      '<tr><td style="padding:4px 0;color:#777;">Tenant</td><td style="padding:4px 0;font-weight:600;text-align:right">' + tenant.name + '</td></tr>',
+      '<tr><td style="padding:4px 0;color:#777;">Unit</td><td style="padding:4px 0;font-weight:600;text-align:right">' + tenant.unit + '</td></tr>',
+      '<tr><td style="padding:4px 0;color:#777;">Billing period</td><td style="padding:4px 0;font-weight:600;text-align:right">' + formatMonthLabel(month) + '</td></tr>',
+      '<tr><td style="padding:4px 0;color:#777;">Total bill</td><td style="padding:4px 0;font-weight:600;text-align:right">' + pesoFmt(totalBill) + '</td></tr>',
+      '<tr style="border-top:1px solid #ddd;"><td style="padding:8px 0 4px;font-weight:700;">Balance due</td>',
+      '<td style="padding:8px 0 4px;font-weight:700;font-size:16px;color:#c0392b;text-align:right">' + pesoFmt(balance) + '</td></tr>',
+      '</table>',
+      partialNote,
+      '</div>',
+
+      '<p style="font-size:14px;color:#555;">Please submit your payment through the Tenant Portal on or before <strong>' + dueDate + '</strong>.</p>',
+      '<p style="font-size:12px;color:#999;margin-top:24px;">For concerns, please contact your property admin directly.</p>',
+      '</div>',
+
+      // Footer
+      '<div style="background:#f0f0eb;padding:14px 32px;border-radius:0 0 8px 8px;text-align:center;font-size:12px;color:#888;">',
+      propertyName + ' &mdash; Automated Billing Reminder',
+      '</div>',
+
+      '</div>'
+    ].join('');
+
+    try {
+      MailApp.sendEmail({
+        to:       tenant.email,
+        subject:  subject,
+        htmlBody: html
+      });
+      Logger.log('sendMonthlyBillingReminders: Sent to ' + tenant.email + ' (' + tenant.name + ')');
+      sent++;
+    } catch (e) {
+      Logger.log('sendMonthlyBillingReminders: FAILED for ' + tenant.name + ' — ' + e.message);
+      failed++;
+    }
+  });
+
+  Logger.log('sendMonthlyBillingReminders: Done — sent=' + sent + ' skipped=' + skipped + ' failed=' + failed);
+  return { sent: sent, skipped: skipped, failed: failed };
+}
+
+// Ordinal suffix helper for GAS (1→"1st", 2→"2nd", 5→"5th" etc.)
+function ordinalGAS(n) {
+  var s   = ['th','st','nd','rd'];
+  var v   = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
 }
 
 // ---------------------------------------------------------------------------
