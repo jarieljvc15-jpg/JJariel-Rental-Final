@@ -11,6 +11,17 @@
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display&display=swap" rel="stylesheet" />
 
   <link rel="stylesheet" href="style.css" />
+  <style>
+    /* Stat card subtitle — shown under the value for contextual figures */
+    .stat-card__sub {
+      font-size: .68rem;
+      color: var(--txt-muted);
+      margin-top: 2px;
+      font-weight: 400;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+  </style>
 </head>
 <body class="page-shell">
 
@@ -65,11 +76,12 @@
 
   <!-- Navigation Tabs -->
   <nav class="nav-tabs" role="tablist" aria-label="Admin sections">
-    <button class="nav-tab active" role="tab" data-tab="dashboard"  aria-selected="true">Dashboard</button>
-    <button class="nav-tab"        role="tab" data-tab="tenants"    aria-selected="false">Tenants</button>
-    <button class="nav-tab"        role="tab" data-tab="billing"    aria-selected="false">Billing</button>
-    <button class="nav-tab"        role="tab" data-tab="payments"   aria-selected="false">Payments</button>
-    <button class="nav-tab"        role="tab" data-tab="ledger"     aria-selected="false">Ledger</button>
+    <button class="nav-tab active" role="tab" data-tab="dashboard"     aria-selected="true">Dashboard</button>
+    <button class="nav-tab"        role="tab" data-tab="tenants"       aria-selected="false">Tenants</button>
+    <button class="nav-tab"        role="tab" data-tab="billing"       aria-selected="false">Billing</button>
+    <button class="nav-tab"        role="tab" data-tab="payments"      aria-selected="false">Payments</button>
+    <button class="nav-tab"        role="tab" data-tab="transactions"  aria-selected="false">All Transactions</button>
+    <button class="nav-tab"        role="tab" data-tab="ledger"        aria-selected="false">Ledger</button>
   </nav>
 
   <!-- ── TAB: DASHBOARD ─────────────────────────────── -->
@@ -101,12 +113,36 @@
         <button class="quick-btn" type="button" data-action="meter-readings">
           <span class="quick-btn__icon">⚡</span>Meter Readings
         </button>
+        <button class="quick-btn" type="button" data-action="send-reminders" id="btn-send-reminders">
+          <span class="quick-btn__icon">🔔</span>Send Reminders
+        </button>
       </div>
     </div>
 
     <!-- Recent activity -->
     <div class="section-gap--sm">
       <p class="section-title">Recent payments</p>
+
+      <!-- Quick filter bar -->
+      <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+        <input
+          type="text"
+          id="dash-filter-name"
+          class="form-input"
+          placeholder="Search tenant…"
+          style="flex:1;min-width:130px;font-size:.8rem;padding:7px 10px"
+          oninput="filterRecentPayments()"
+        />
+        <input
+          type="date"
+          id="dash-filter-date"
+          class="form-input"
+          style="width:150px;font-size:.8rem;padding:7px 10px"
+          onchange="filterRecentPayments()"
+        />
+        <button class="btn btn-ghost btn-sm" type="button" onclick="clearRecentPaymentsFilter()">Clear</button>
+      </div>
+
       <div class="card card--flat" id="dash-activity">
         <div class="skeleton-line"></div>
         <div class="skeleton-line"></div>
@@ -191,6 +227,83 @@
 
   </section>
 
+  <!-- ── TAB: ALL TRANSACTIONS ─────────────────────── -->
+  <section id="tab-transactions" class="content-area hidden" role="tabpanel" aria-label="All Transactions">
+
+    <div class="section-header">
+      <h2>All Transactions</h2>
+      <button class="btn btn-secondary btn-sm" type="button" id="btn-export-csv">⬇ Export CSV</button>
+    </div>
+
+    <!-- Filters -->
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:var(--sp-md)">
+      <input
+        type="text"
+        id="txn-filter-name"
+        class="form-input"
+        placeholder="Tenant name or code…"
+        style="flex:2;min-width:140px;font-size:.8rem;padding:7px 10px"
+        oninput="filterTransactions()"
+      />
+      <input
+        type="date"
+        id="txn-filter-from"
+        class="form-input"
+        style="width:148px;font-size:.8rem;padding:7px 10px"
+        onchange="filterTransactions()"
+      />
+      <input
+        type="date"
+        id="txn-filter-to"
+        class="form-input"
+        style="width:148px;font-size:.8rem;padding:7px 10px"
+        onchange="filterTransactions()"
+      />
+      <select id="txn-filter-method" class="form-select" style="width:auto;font-size:.8rem;padding:7px 28px 7px 10px" onchange="filterTransactions()">
+        <option value="">All methods</option>
+        <option value="GCash">GCash</option>
+        <option value="Cash">Cash</option>
+        <option value="Bank Transfer">Bank Transfer</option>
+      </select>
+      <select id="txn-filter-status" class="form-select" style="width:auto;font-size:.8rem;padding:7px 28px 7px 10px" onchange="filterTransactions()">
+        <option value="">All statuses</option>
+        <option value="approved">Approved</option>
+        <option value="pending">Pending</option>
+        <option value="rejected">Rejected</option>
+      </select>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input
+          type="number"
+          id="txn-filter-min"
+          class="form-input"
+          placeholder="Min ₱"
+          style="width:90px;font-size:.8rem;padding:7px 10px"
+          oninput="filterTransactions()"
+        />
+        <span style="font-size:.8rem;color:var(--txt-muted)">–</span>
+        <input
+          type="number"
+          id="txn-filter-max"
+          class="form-input"
+          placeholder="Max ₱"
+          style="width:90px;font-size:.8rem;padding:7px 10px"
+          oninput="filterTransactions()"
+        />
+      </div>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="clearTransactionFilters()">Clear</button>
+    </div>
+
+    <!-- Result count -->
+    <p id="txn-result-count" class="text-muted" style="font-size:.8rem;margin-bottom:var(--sp-sm)"></p>
+
+    <!-- Table -->
+    <div class="table-wrapper" id="txn-table-wrap">
+      <div class="skeleton-line" style="margin:16px"></div>
+      <div class="skeleton-line" style="margin:16px;width:80%"></div>
+    </div>
+
+  </section>
+
   <!-- ── TAB: LEDGER ────────────────────────────────── -->
   <section id="tab-ledger" class="content-area hidden" role="tabpanel" aria-label="Ledger">
 
@@ -226,36 +339,69 @@
      MODALS
 ════════════════════════════════════════════════════ -->
 
-<!-- Log Payment Modal -->
+<!-- Log Payment Modal (Flexible) -->
 <dialog id="modal-log-payment" aria-labelledby="modal-log-payment-title">
   <div class="dialog-header">
     <h2 id="modal-log-payment-title">Log Payment</h2>
     <button class="dialog-close" type="button" onclick="closeModal('modal-log-payment')" aria-label="Close">✕</button>
   </div>
   <div class="dialog-body">
+
+    <!-- Step 1: Tenant -->
     <div class="form-group">
       <label class="form-label" for="lp-tenant">Tenant <span class="required">*</span></label>
-      <select id="lp-tenant" name="tenant_id" class="form-select"></select>
+      <select id="lp-tenant" class="form-select"></select>
     </div>
-    <div class="form-group">
-      <label class="form-label" for="lp-billing">Billing period <span class="required">*</span></label>
-      <select id="lp-billing" name="billing_id" class="form-select">
-        <option value="">— select tenant first —</option>
-      </select>
+
+    <!-- Step 2: Billing periods (checkboxes, loaded dynamically) -->
+    <div class="form-group" id="lp-periods-group" style="display:none">
+      <label class="form-label">Billing periods to pay <span class="required">*</span></label>
+      <div id="lp-periods-list" style="
+        border:1px solid var(--border);
+        border-radius:var(--r-md);
+        overflow:hidden;
+        margin-top:4px;
+      "></div>
+      <span class="form-hint">Check all periods this payment should cover. Oldest first is recommended.</span>
     </div>
+
+    <!-- Step 3: Amount + date -->
     <div class="form-row">
       <div class="form-group">
-        <label class="form-label" for="lp-amount">Amount (₱) <span class="required">*</span></label>
-        <input type="number" id="lp-amount" name="amount" class="form-input" placeholder="0.00" min="0" step="0.01" />
+        <label class="form-label" for="lp-amount">Total amount paid (₱) <span class="required">*</span></label>
+        <input type="number" id="lp-amount" class="form-input" placeholder="0.00" min="0" step="0.01" />
       </div>
       <div class="form-group">
-        <label class="form-label" for="lp-date">Date <span class="required">*</span></label>
-        <input type="date" id="lp-date" name="date" class="form-input" />
+        <label class="form-label" for="lp-date">Payment date <span class="required">*</span></label>
+        <input type="date" id="lp-date" class="form-input" />
       </div>
     </div>
+
+    <!-- Credit warning (shown if excess) -->
+    <div id="lp-credit-warning" style="
+      display:none;
+      background:var(--accent-pale);
+      border:1px solid var(--accent-light);
+      border-radius:var(--r-md);
+      padding:var(--sp-md);
+      font-size:.85rem;
+      color:var(--clr-teal-dark);
+      margin-bottom:var(--sp-md);
+    ">
+      <strong>⚠️ Advance credit notice</strong><br>
+      <span id="lp-credit-amount"></span> will be recorded as a credit balance on this tenant's account and automatically applied to future bills.
+      <div style="margin-top:var(--sp-sm)">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="lp-credit-confirm" />
+          I confirm this advance credit is correct
+        </label>
+      </div>
+    </div>
+
+    <!-- Method + ref -->
     <div class="form-group">
       <label class="form-label" for="lp-method">Payment method <span class="required">*</span></label>
-      <select id="lp-method" name="method" class="form-select">
+      <select id="lp-method" class="form-select">
         <option value="">— select —</option>
         <option value="GCash">GCash</option>
         <option value="Cash">Cash</option>
@@ -264,12 +410,13 @@
     </div>
     <div class="form-group">
       <label class="form-label" for="lp-ref">Reference number</label>
-      <input type="text" id="lp-ref" name="reference_no" class="form-input" placeholder="e.g. GCash ref or OR number" />
+      <input type="text" id="lp-ref" class="form-input" placeholder="e.g. GCash ref or OR number" />
     </div>
     <div class="form-group">
       <label class="form-label" for="lp-note">Note</label>
-      <input type="text" id="lp-note" name="note" class="form-input" placeholder="Optional note" />
+      <input type="text" id="lp-note" class="form-input" placeholder="Optional note" />
     </div>
+
   </div>
   <div class="dialog-footer">
     <button class="btn btn-ghost" type="button" onclick="closeModal('modal-log-payment')">Cancel</button>
@@ -385,6 +532,31 @@
     <button class="btn btn-secondary" type="button" onclick="window.print()">🖨 Print</button>
   </div>
 </dialog>
+
+<!-- Payment Detail Drawer -->
+<div id="drawer-backdrop" style="
+  display:none;position:fixed;inset:0;
+  background:rgba(0,0,0,.45);z-index:900;
+  transition:opacity .2s;
+" onclick="closeDrawer()"></div>
+
+<div id="payment-drawer" style="
+  display:none;position:fixed;bottom:0;left:0;right:0;
+  background:var(--bg-card);border-radius:var(--r-lg) var(--r-lg) 0 0;
+  box-shadow:0 -4px 32px rgba(0,0,0,.18);
+  z-index:901;max-height:85vh;overflow-y:auto;
+  transform:translateY(100%);transition:transform .25s cubic-bezier(.4,0,.2,1);
+" role="dialog" aria-labelledby="drawer-title" aria-modal="true">
+  <div style="padding:var(--sp-lg)">
+    <!-- Handle -->
+    <div style="width:40px;height:4px;background:var(--clr-ink-15);border-radius:2px;margin:0 auto var(--sp-md)"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--sp-md)">
+      <h3 id="drawer-title" style="margin:0;font-size:1rem">Payment Detail</h3>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="closeDrawer()">✕</button>
+    </div>
+    <div id="drawer-body"></div>
+  </div>
+</div>
 
 <script src="api.js"></script>
 <script src="admin.js"></script>
