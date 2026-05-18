@@ -34,7 +34,8 @@ function setupSheets() {
         ['late_fee_amount',  '200'],
         ['late_fee_type',    'fixed'],
         ['deposit_multiplier','2'],
-        ['login_prefix',     'JJ']
+        ['login_prefix',     'JJ'],
+        ['reminder_enabled', 'true']
       ],
       // Config is special: seed data goes into column A and B directly
       isSeedConfig: true
@@ -165,4 +166,77 @@ function setupSheets() {
   msg += 'Setup complete! Your Sheets file is ready.\n\nNext step: open Code.gs and set your SPREADSHEET_ID.';
 
   ui.alert('JJ Apartment RMS — Setup Complete', msg, ui.ButtonSet.OK);
+}
+
+// =============================================================================
+// setupMonthlyTrigger
+// Installs a time-driven trigger that runs sendMonthlyBillingReminders()
+// on the 2nd of every month at 8:00 AM (script timezone).
+//
+// HOW TO USE:
+//   1. In Apps Script, select "setupMonthlyTrigger" from the function dropdown
+//   2. Click ▶ Run once — the trigger is installed and will recur automatically
+//   3. Verify it was created: Triggers (clock icon) in the left sidebar
+//
+// SAFE TO RE-RUN: Will not create a duplicate if a trigger already exists.
+// =============================================================================
+function setupMonthlyTrigger() {
+  var ui = SpreadsheetApp.getUi();
+  var functionName = 'sendMonthlyBillingReminders';
+
+  // Check if a trigger for this function already exists
+  var existingTriggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < existingTriggers.length; i++) {
+    if (existingTriggers[i].getHandlerFunction() === functionName) {
+      ui.alert(
+        'Trigger already exists',
+        'A monthly trigger for "' + functionName + '" is already installed.\n\n' +
+        'No duplicate was created. Check Triggers in the sidebar to verify.',
+        ui.ButtonSet.OK
+      );
+      return;
+    }
+  }
+
+  // Install the trigger: runs on the 2nd of every month at 8:00 AM
+  ScriptApp.newTrigger(functionName)
+    .timeBased()
+    .onMonthDay(2)
+    .atHour(8)
+    .create();
+
+  ui.alert(
+    'Trigger installed ✅',
+    '"' + functionName + '" will now run automatically on the 2nd of every month at 8:00 AM.\n\n' +
+    'You can verify it under Triggers (clock icon) in the Apps Script sidebar.\n\n' +
+    'To disable without removing the trigger, set reminder_enabled = false in your Config sheet.',
+    ui.ButtonSet.OK
+  );
+}
+
+// =============================================================================
+// removeMonthlyTrigger
+// Removes the billing reminder trigger if you need to uninstall it.
+// Run this from the Apps Script editor — select it from the function dropdown.
+// =============================================================================
+function removeMonthlyTrigger() {
+  var ui = SpreadsheetApp.getUi();
+  var functionName = 'sendMonthlyBillingReminders';
+  var removed = 0;
+
+  var triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(function(trigger) {
+    if (trigger.getHandlerFunction() === functionName) {
+      ScriptApp.deleteTrigger(trigger);
+      removed++;
+    }
+  });
+
+  ui.alert(
+    removed > 0 ? 'Trigger removed ✅' : 'No trigger found',
+    removed > 0
+      ? removed + ' trigger(s) for "' + functionName + '" have been removed.'
+      : 'No trigger for "' + functionName + '" was found. Nothing to remove.',
+    ui.ButtonSet.OK
+  );
 }
