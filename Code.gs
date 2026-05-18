@@ -52,8 +52,10 @@ function doPost(e) {
       case 'getPendingPayments':      return getPendingPayments(body);
       case 'getAllPayments':          return getAllPayments(body);
       case 'generateReceipt':        return generateReceipt(body);
+      case 'resendReceiptEmail':      return resendReceiptEmail(body);
       case 'getTenantCreditBalance':  return getTenantCreditBalance(body);
       case 'triggerRemindersNow':     return triggerRemindersNow(body);
+      case 'getCollectionStats':      return getCollectionStats(body);
       default:                        return respond(false, null, 'Unknown action: ' + action);
     }
   } catch (err) {
@@ -166,10 +168,25 @@ function currentMonth() {
 
 function formatMonthLabel(yyyymm) {
   // "2025-03" -> "March 2025"
-  var parts = String(yyyymm).split('-');
+  // Also handles Date objects returned by Google Sheets
+  var s;
+  if (yyyymm instanceof Date) {
+    var tz = Session.getScriptTimeZone();
+    s = Utilities.formatDate(yyyymm, tz, 'yyyy-MM');
+  } else {
+    s = String(yyyymm || '').trim();
+    // Handle "MM/DD/YYYY" format
+    if (/^\d{1,2}\/\d{1,2}\/\d{4}/.test(s)) {
+      var mp = s.split('/');
+      s = mp[2] + '-' + String(mp[0]).padStart(2, '0');
+    }
+  }
+  var parts = s.split('-');
+  if (parts.length < 2) return s; // fallback: return as-is
   var months = ['January','February','March','April','May','June',
                 'July','August','September','October','November','December'];
-  return months[parseInt(parts[1]) - 1] + ' ' + parts[0];
+  var monthIdx = parseInt(parts[1]) - 1;
+  return (months[monthIdx] || parts[1]) + ' ' + parts[0];
 }
 
 function respond(success, data, error) {
@@ -1220,6 +1237,42 @@ function generateReceipt(body) {
 }
 
 // ---------------------------------------------------------------------------
+// ACTION: resendReceiptEmail
+// Re-sends the receipt email for an already-approved payment. Admin only.
+// ---------------------------------------------------------------------------
+function resendReceiptEmail(body) {
+  if (!validateAdmin(body)) return respond(false, null, 'Unauthorized');
+
+  var cfg = loadConfig();
+
+  // Find the receipt snapshot
+  var rawReceipts = getSheetData(SHEET.RECEIPTS);
+  var receipts    = sheetToObjects(SHEET.RECEIPTS, rawReceipts);
+  var existing    = receipts.find(function(r) {
+    return String(r.payment_id) === String(body.payment_id);
+  });
+  if (!existing) return respond(false, null, 'Receipt not found for this payment');
+
+  var receipt = JSON.parse(existing.receipt_snapshot || '{}');
+
+  // Find the tenant for their current email (in case it was updated since receipt was saved)
+  var rawTenants = getSheetData(SHEET.TENANTS);
+  var tenants    = sheetToObjects(SHEET.TENANTS, rawTenants);
+  var tenant     = tenants.find(function(t) {
+    return String(t.tenant_id) === String(existing.tenant_id);
+  });
+
+  if (!tenant) return respond(false, null, 'Tenant not found');
+
+  var emailResult = sendReceiptEmail(tenant, receipt, cfg);
+  return respond(true, {
+    emailSent: emailResult.emailSent,
+    emailNote: emailResult.reason || '',
+    sentTo:    tenant.email || ''
+  });
+}
+
+// ---------------------------------------------------------------------------
 // INTERNAL: updateBillingAfterPayment
 // Increments amount_paid and recalculates balance + status for a billing row.
 // Returns the updated billing object.
@@ -1298,6 +1351,121 @@ function buildAndSaveReceipt(paymentId, tenant, billing, payment, cfg) {
   });
 
   return snapshot;
+}
+
+// ---------------------------------------------------------------------------
+// ACTION: getCollectionStats
+// Returns daily/weekly/monthly collections and billing totals for charting.
+// mode: 'daily' (last 7 days), 'weekly' (last 8 weeks), 'monthly' (last 6 months)
+// ---------------------------------------------------------------------------
+function getCollectionStats(body) {
+  if (!validateAdmin(body)) return respond(false, null, 'Unauthorized');
+
+  var mode = body.mode || 'monthly'; // 'daily' | 'weekly' | 'monthly'
+  var tz   = Session.getScriptTimeZone();
+
+  var rawPayments = getSheetData(SHEET.PAYMENTS);
+  var rawBillings = getSheetData(SHEET.BILLING);
+  var payments    = sheetToObjects(SHEET.PAYMENTS, rawPayments);
+  var billings    = sheetToObjects(SHEET.BILLING,  rawBillings);
+
+  // Helper: format a Date to a bucket key
+  function bucketKey(date, m) {
+    if (!(date instanceof Date)) {
+      date = new Date(date);
+    }
+    if (m === 'daily')   return Utilities.formatDate(date, tz, 'yyyy-MM-dd');
+    if (m === 'weekly')  return Utilities.formatDate(date, tz, 'yyyy-') + 'W' + getWeekNumber(date);
+    return Utilities.formatDate(date, tz, 'yyyy-MM');
+  }
+
+  function getWeekNumber(d) {
+    var onejan = new Date(d.getFullYear(), 0, 1);
+    return Math.ceil((((d - onejan) / 86400000) + onejan.getDay() + 1) / 7);
+  }
+
+  // Build bucket list
+  var now    = new Date();
+  var labels = [];
+  var keys   = [];
+
+  if (mode === 'daily') {
+    for (var i = 6; i >= 0; i--) {
+      var d = new Date(now);
+      d.setDate(d.getDate() - i);
+      var k = Utilities.formatDate(d, tz, 'yyyy-MM-dd');
+      keys.push(k);
+      labels.push(Utilities.formatDate(d, tz, 'MMM d'));
+    }
+  } else if (mode === 'weekly') {
+    for (var i = 7; i >= 0; i--) {
+      var d = new Date(now);
+      d.setDate(d.getDate() - (i * 7));
+      var k = bucketKey(d, 'weekly');
+      if (keys.indexOf(k) === -1) {
+        keys.push(k);
+        labels.push('W' + getWeekNumber(d) + ' ' + d.getFullYear());
+      }
+    }
+  } else {
+    // monthly — last 6 months
+    for (var i = 5; i >= 0; i--) {
+      var d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      var k = Utilities.formatDate(d, tz, 'yyyy-MM');
+      keys.push(k);
+      labels.push(Utilities.formatDate(d, tz, 'MMM yyyy'));
+    }
+  }
+
+  // Aggregate approved payments into buckets
+  var collected = {};
+  keys.forEach(function(k) { collected[k] = 0; });
+
+  payments.forEach(function(p) {
+    if (String(p.status).toLowerCase() !== 'approved') return;
+    var pDate = p.date instanceof Date ? p.date : new Date(p.date);
+    if (isNaN(pDate.getTime())) return;
+    var k = bucketKey(pDate, mode);
+    if (collected.hasOwnProperty(k)) {
+      collected[k] += parseFloat(p.amount) || 0;
+    }
+  });
+
+  // Aggregate billed amounts per billing month (monthly only makes sense)
+  var billed = {};
+  keys.forEach(function(k) { billed[k] = 0; });
+
+  billings.forEach(function(b) {
+    var bMonth = b.month instanceof Date
+      ? Utilities.formatDate(b.month, tz, 'yyyy-MM')
+      : String(b.month || '').substr(0, 7);
+
+    if (mode === 'monthly') {
+      if (billed.hasOwnProperty(bMonth)) {
+        billed[bMonth] += parseFloat(b.total_bill) || 0;
+      }
+    } else {
+      // For daily/weekly, map billing month to the first day of that month
+      var parts = bMonth.split('-');
+      if (parts.length < 2) return;
+      var bd = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, 1);
+      var k  = bucketKey(bd, mode);
+      if (billed.hasOwnProperty(k)) {
+        billed[k] += parseFloat(b.total_bill) || 0;
+      }
+    }
+  });
+
+  var result = keys.map(function(k, i) {
+    return {
+      key:       k,
+      label:     labels[i],
+      collected: collected[k],
+      billed:    billed[k]
+    };
+  });
+
+  return respond(true, { mode: mode, periods: result });
 }
 
 // ---------------------------------------------------------------------------
