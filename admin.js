@@ -116,7 +116,7 @@ async function attemptLogin() {
   loginErr.classList.add('hidden');
 
   try {
-    if (!_cfg.admin_pin) _cfg = await apiGetConfig(true);
+    _cfg = await apiGetConfig(true);
 
     if (entered === String(_cfg.admin_pin)) {
       _pin = entered;
