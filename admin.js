@@ -17,6 +17,9 @@ let _recentPayments   = [];   // copy of last dashboard recent payments for clie
 let _txnFiltered      = [];   // currently filtered transactions
 let _activeTab  = 'dashboard';
 let _ledgerFilter = 'all';
+let _currentReceiptPaymentId = null; // tracks which payment the open receipt belongs to
+let _chartMode = 'daily';            // 'daily' | 'weekly' | 'monthly'
+let _chartData = null;               // last fetched collection stats
 
 const _loaded = {
   dashboard:    false,
@@ -205,6 +208,8 @@ async function loadDashboard(bustCache = false) {
     const data = await apiGetDashboard(_pin, null, bustCache);
     renderDashboard(data);
     _loaded.dashboard = true;
+    // Load chart data (non-blocking — don't await so dashboard renders first)
+    loadCollectionStats(_chartMode, bustCache);
   } catch (e) {
     document.getElementById('dash-stats').innerHTML =
       `<div class="empty-state"><p class="empty-state__msg">${esc(e.message)}</p></div>`;
@@ -340,6 +345,7 @@ function renderTenants() {
           <div class="d-flex gap-sm" style="flex-wrap:wrap;font-size:.78rem;color:var(--txt-muted);margin-bottom:var(--sp-md)">
             <span>Login: <strong>${esc(t.login_code)}</strong></span>
             <span>Rent: <strong>${formatPeso(t.monthly_rent)}</strong>/mo</span>
+            ${t.move_in_date ? `<span>Move-in: <strong>${esc(String(t.move_in_date).substr(0,10))}</strong></span>` : ''}
             ${t.email ? `<span>✉ ${esc(t.email)}</span>` : ''}
             ${t.contact ? `<span>📞 ${esc(t.contact)}</span>` : ''}
           </div>
@@ -889,8 +895,11 @@ async function submitApproval(action) {
 }
 
 async function viewReceipt(paymentId) {
+  _currentReceiptPaymentId = paymentId;
   const body = document.getElementById('receipt-view-body');
   body.innerHTML = '<div class="skeleton-card"></div>';
+  const resendBtn = document.getElementById('btn-resend-receipt');
+  if (resendBtn) resendBtn.textContent = '✉ Resend Email';
   openModal('modal-receipt');
 
   try {
@@ -1146,6 +1155,161 @@ function exportTransactionsCSV() {
   a.download = `jj-transactions-${getTodayDate()}.csv`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// ---------------------------------------------------------------------------
+// RESEND RECEIPT EMAIL
+// ---------------------------------------------------------------------------
+async function resendReceiptEmail() {
+  if (!_currentReceiptPaymentId) return;
+  const btn = document.getElementById('btn-resend-receipt');
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+
+  try {
+    const result = await apiPost({
+      action:     'resendReceiptEmail',
+      admin_pin:  _pin,
+      payment_id: _currentReceiptPaymentId
+    });
+    if (result.emailSent) {
+      showToast(`Receipt resent to ${result.sentTo}`, 'success');
+    } else {
+      showToast(`Could not send — ${result.emailNote || 'no email on file'}`, 'warning');
+    }
+  } catch (e) {
+    showToast('Resend failed: ' + e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '✉ Resend Email'; }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// COLLECTION STATS CHART
+// ---------------------------------------------------------------------------
+async function loadCollectionStats(mode, bustCache = false) {
+  _chartMode = mode || _chartMode;
+  const wrap     = document.getElementById('chart-table');
+  const canvas   = document.getElementById('collection-chart');
+  if (wrap) wrap.innerHTML = '<div class="skeleton-line" style="margin:12px"></div>';
+
+  try {
+    const data = await apiPost({
+      action:    'getCollectionStats',
+      admin_pin: _pin,
+      mode:      _chartMode
+    });
+    _chartData = data;
+    renderChart(data.periods);
+    renderChartTable(data.periods);
+  } catch (e) {
+    if (wrap) wrap.innerHTML = `<p class="text-muted" style="padding:12px;font-size:.8rem">${esc(e.message)}</p>`;
+  }
+}
+
+function switchChartMode(mode) {
+  _chartMode = mode;
+  document.querySelectorAll('.chart-mode-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.mode === mode);
+  });
+  loadCollectionStats(mode, true);
+}
+
+function renderChart(periods) {
+  const canvas = document.getElementById('collection-chart');
+  if (!canvas || !periods || !periods.length) return;
+
+  const W        = canvas.parentElement.clientWidth || 320;
+  const H        = 200;
+  const padL     = 52, padR = 12, padT = 16, padB = 36;
+  const barW     = Math.max(6, Math.floor((W - padL - padR) / periods.length / 2.5));
+  const gap      = Math.floor((W - padL - padR) / periods.length);
+
+  const maxVal   = Math.max(...periods.map(p => Math.max(p.collected, p.billed)), 1);
+  const chartH   = H - padT - padB;
+
+  canvas.width  = W;
+  canvas.height = H;
+  canvas.style.height = H + 'px';
+
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  // Grid lines
+  ctx.strokeStyle = '#e5e5e5';
+  ctx.lineWidth   = 1;
+  [0.25, 0.5, 0.75, 1].forEach(pct => {
+    const y = padT + chartH * (1 - pct);
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+    ctx.fillStyle   = '#aaa';
+    ctx.font        = '9px sans-serif';
+    ctx.textAlign   = 'right';
+    ctx.fillText(formatPeso(maxVal * pct).replace('₱','₱'), padL - 4, y + 3);
+  });
+
+  // Bars
+  periods.forEach((p, i) => {
+    const x      = padL + i * gap + Math.floor(gap / 2) - barW;
+    const bilH   = Math.round((p.billed    / maxVal) * chartH);
+    const colH   = Math.round((p.collected / maxVal) * chartH);
+
+    // Billed bar (light blue)
+    ctx.fillStyle = '#c0d8f0';
+    ctx.fillRect(x, padT + chartH - bilH, barW, bilH);
+
+    // Collected bar (teal)
+    ctx.fillStyle = '#1aab85';
+    ctx.fillRect(x + barW + 2, padT + chartH - colH, barW, colH);
+
+    // Label
+    ctx.fillStyle   = '#888';
+    ctx.font        = '9px sans-serif';
+    ctx.textAlign   = 'center';
+    ctx.fillText(p.label, x + barW, H - 8);
+  });
+}
+
+function renderChartTable(periods) {
+  const wrap = document.getElementById('chart-table');
+  if (!wrap || !periods) return;
+
+  const totalCollected = periods.reduce((s, p) => s + p.collected, 0);
+  const totalBilled    = periods.reduce((s, p) => s + p.billed, 0);
+
+  wrap.innerHTML = `
+    <table style="font-size:.8rem">
+      <thead>
+        <tr>
+          <th>Period</th>
+          <th style="text-align:right">Billed</th>
+          <th style="text-align:right">Collected</th>
+          <th style="text-align:right">Variance</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${periods.map(p => {
+          const variance = p.collected - p.billed;
+          const varClass = variance >= 0 ? 'color:var(--clr-green)' : 'color:var(--clr-red)';
+          return `
+            <tr>
+              <td>${esc(p.label)}</td>
+              <td style="text-align:right">${formatPeso(p.billed)}</td>
+              <td style="text-align:right">${formatPeso(p.collected)}</td>
+              <td style="text-align:right;${varClass}">${variance >= 0 ? '+' : ''}${formatPeso(variance)}</td>
+            </tr>`;
+        }).join('')}
+      </tbody>
+      <tfoot>
+        <tr style="font-weight:700;border-top:2px solid var(--border)">
+          <td>Total</td>
+          <td style="text-align:right">${formatPeso(totalBilled)}</td>
+          <td style="text-align:right">${formatPeso(totalCollected)}</td>
+          <td style="text-align:right;${totalCollected - totalBilled >= 0 ? 'color:var(--clr-green)' : 'color:var(--clr-red)'}">
+            ${totalCollected - totalBilled >= 0 ? '+' : ''}${formatPeso(totalCollected - totalBilled)}
+          </td>
+        </tr>
+      </tfoot>
+    </table>
+  `;
 }
 
 // ---------------------------------------------------------------------------
