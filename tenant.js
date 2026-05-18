@@ -24,11 +24,19 @@ const _loaded = {
 // BOOT
 // ---------------------------------------------------------------------------
 (async function boot() {
+  const cachedCfg = apiGetCachedConfig();
+  if (cachedCfg) {
+    _cfg = cachedCfg;
+    applyPropertyName(_cfg.property_name || 'Property', 'Tenant Portal');
+  } else {
+    applyPropertyName('Property', 'Tenant Portal');
+  }
+
   try {
     _cfg = await apiGetConfig();
     applyPropertyName(_cfg.property_name || 'Property', 'Tenant Portal');
   } catch (e) {
-    applyPropertyName('Property', 'Tenant Portal');
+    // Keep cached/default branding; login will show a connection error if needed.
   }
 
   // Wire login
@@ -108,7 +116,7 @@ function logout() {
   _tenantInfo = null;
   _billingRows = [];
   _payments    = [];
-  _cacheClear();
+  apiClearDataCache();
   Object.keys(_loaded).forEach(k => _loaded[k] = false);
   document.getElementById('app-shell').classList.add('hidden');
   document.getElementById('login-screen').classList.remove('hidden');
@@ -151,9 +159,11 @@ function switchTab(tabName) {
 // ---------------------------------------------------------------------------
 // HOME TAB
 // ---------------------------------------------------------------------------
-async function loadHome() {
+async function loadHome(bustCache = false) {
   try {
-    _tenantInfo = await apiGetTenantInfo(_loginCode);
+    if (!_tenantInfo || bustCache) {
+      _tenantInfo = await apiGetTenantInfo(_loginCode, null, bustCache);
+    }
     renderHome(_tenantInfo);
     _loaded.home = true;
   } catch (e) {

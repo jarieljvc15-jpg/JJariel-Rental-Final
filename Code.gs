@@ -21,6 +21,58 @@ var SHEET = {
   LEDGER:   'Ledger'
 };
 
+
+// Server-side read cache. This keeps common dashboard/config requests from
+// reopening and scanning Google Sheets for every page load. Any write clears
+// these keys so users still see fresh data after changes.
+var CACHE_KEY_PREFIX = 'jjrms:';
+var CACHE_SECONDS = {
+  CONFIG: 21600,       // 6 hours
+  DASHBOARD: 30,       // dashboard numbers change after payments/readings
+  LISTS: 30,
+  COLLECTION: 60
+};
+
+function cacheKey(name, suffix) {
+  return CACHE_KEY_PREFIX + name + (suffix ? ':' + suffix : '');
+}
+
+function cacheGetJson(name, suffix) {
+  try {
+    var raw = CacheService.getScriptCache().get(cacheKey(name, suffix));
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+function cachePutJson(name, suffix, value, seconds) {
+  try {
+    CacheService.getScriptCache().put(
+      cacheKey(name, suffix),
+      JSON.stringify(value),
+      seconds || CACHE_SECONDS.LISTS
+    );
+  } catch (err) {
+    // Cache entries can be too large; never fail the real request because of it.
+  }
+}
+
+function invalidateReadCaches() {
+  try {
+    var cache = CacheService.getScriptCache();
+    cache.remove(cacheKey('config'));
+    cache.remove(cacheKey('pendingPayments'));
+    cache.remove(cacheKey('allPayments'));
+    cache.remove(cacheKey('collectionStats', 'daily'));
+    cache.remove(cacheKey('collectionStats', 'weekly'));
+    cache.remove(cacheKey('collectionStats', 'monthly'));
+    cache.remove(cacheKey('dashboard', currentMonth()));
+  } catch (err) {
+    // Writes should still succeed even if cache cleanup fails.
+  }
+}
+
 // ---------------------------------------------------------------------------
 // ENTRY POINT
 // All requests arrive here as HTTP POST. The "action" field in the JSON body
@@ -108,6 +160,7 @@ function appendRow(sheetName, obj) {
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
   var row     = headers.map(function(h) { return obj[h] !== undefined ? obj[h] : ''; });
   sheet.appendRow(row);
+  invalidateReadCaches();
 }
 
 function updateRow(sheetName, rowIndex, obj) {
@@ -115,6 +168,7 @@ function updateRow(sheetName, rowIndex, obj) {
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
   var row     = headers.map(function(h) { return obj[h] !== undefined ? obj[h] : ''; });
   sheet.getRange(rowIndex, 1, 1, row.length).setValues([row]);
+  invalidateReadCaches();
 }
 
 function findRowIndex(sheetName, fn, rawData) {
@@ -182,9 +236,13 @@ function respond(success, data, error) {
 }
 
 function loadConfig() {
+  var cached = cacheGetJson('config');
+  if (cached) return cached;
+
   var rows = sheetToObjects(SHEET.CONFIG);
   var cfg  = {};
   rows.forEach(function(r) { cfg[r.key] = r.value; });
+  cachePutJson('config', null, cfg, CACHE_SECONDS.CONFIG);
   return cfg;
 }
 
@@ -406,6 +464,8 @@ function getDashboardData(body) {
 
   var cfg      = loadConfig();
   var month    = body.month || currentMonth();
+  var cached   = cacheGetJson('dashboard', month);
+  if (cached) return respond(true, cached);
 
   var rawTenants  = getSheetData(SHEET.TENANTS);
   var rawBillings = getSheetData(SHEET.BILLING);
@@ -484,7 +544,7 @@ function getDashboardData(body) {
       };
     });
 
-  return respond(true, {
+  var result = {
     month:                    month,
     collected_month:          collected,
     collected_by_payment_date: collectedByPaymentDate,
@@ -493,7 +553,10 @@ function getDashboardData(body) {
     overdue_count:            overdueIds.length,
     occupancy:                occupancy,
     recent_payments:          recent
-  });
+  };
+
+  cachePutJson('dashboard', month, result, CACHE_SECONDS.DASHBOARD);
+  return respond(true, result);
 }
 
 // ---------------------------------------------------------------------------
@@ -501,6 +564,9 @@ function getDashboardData(body) {
 // ---------------------------------------------------------------------------
 function getPendingPayments(body) {
   if (!validateAdmin(body)) return respond(false, null, 'Unauthorized');
+
+  var cached = cacheGetJson('pendingPayments');
+  if (cached) return respond(true, cached);
 
   var rawTenants  = getSheetData(SHEET.TENANTS);
   var rawPayments = getSheetData(SHEET.PAYMENTS);
@@ -518,6 +584,7 @@ function getPendingPayments(body) {
     });
   });
 
+  cachePutJson('pendingPayments', null, result, CACHE_SECONDS.LISTS);
   return respond(true, result);
 }
 
@@ -528,6 +595,9 @@ function getPendingPayments(body) {
 // ---------------------------------------------------------------------------
 function getAllPayments(body) {
   if (!validateAdmin(body)) return respond(false, null, 'Unauthorized');
+
+  var cached = cacheGetJson('allPayments');
+  if (cached) return respond(true, cached);
 
   var rawTenants  = getSheetData(SHEET.TENANTS);
   var rawPayments = getSheetData(SHEET.PAYMENTS);
@@ -578,6 +648,7 @@ function getAllPayments(body) {
       };
     });
 
+  cachePutJson('allPayments', null, result, CACHE_SECONDS.LISTS);
   return respond(true, result);
 }
 
@@ -1276,6 +1347,9 @@ function getCollectionStats(body) {
   if (!validateAdmin(body)) return respond(false, null, 'Unauthorized');
 
   var mode = body.mode || 'monthly';
+  var cached = cacheGetJson('collectionStats', mode);
+  if (cached) return respond(true, cached);
+
   var tz   = Session.getScriptTimeZone();
 
   var rawPayments = getSheetData(SHEET.PAYMENTS);
@@ -1373,7 +1447,9 @@ function getCollectionStats(body) {
     };
   });
 
-  return respond(true, { mode: mode, periods: result });
+  var payload = { mode: mode, periods: result };
+  cachePutJson('collectionStats', mode, payload, CACHE_SECONDS.COLLECTION);
+  return respond(true, payload);
 }
 
 // ---------------------------------------------------------------------------
