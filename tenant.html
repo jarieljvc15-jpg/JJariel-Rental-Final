@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Tenant Portal" />
+  <title>Loading…</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="style.css" />
+
+  <style>
+    /* ── Tenant-specific additions ── */
+
+    /* Balance hero card on dashboard */
+    .balance-hero {
+      background: var(--bg-topbar);
+      border-radius: var(--r-lg);
+      padding: var(--sp-xl) var(--sp-lg);
+      text-align: center;
+      margin-bottom: var(--sp-md);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .balance-hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at 70% 30%, rgba(26,171,133,.25), transparent 70%);
+      pointer-events: none;
+    }
+
+    .balance-hero__label {
+      font-size: .72rem;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--clr-teal-light);
+      margin-bottom: var(--sp-xs);
+    }
+
+    .balance-hero__amount {
+      font-family: 'DM Serif Display', serif;
+      font-size: 2.6rem;
+      color: var(--clr-white);
+      line-height: 1;
+      margin-bottom: var(--sp-xs);
+    }
+
+    .balance-hero__amount--zero { color: var(--clr-teal-light); }
+
+    .balance-hero__due {
+      font-size: .8rem;
+      color: var(--clr-teal-light);
+      opacity: .85;
+    }
+
+    .balance-hero__last {
+      margin-top: var(--sp-md);
+      font-size: .78rem;
+      color: rgba(255,255,255,.6);
+    }
+
+    /* Tenant info chip strip */
+    .tenant-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--sp-sm);
+      margin-bottom: var(--sp-md);
+    }
+
+    .tenant-chip {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--r-pill);
+      padding: 5px 12px;
+      font-size: .78rem;
+      color: var(--txt-secondary);
+      font-weight: 500;
+    }
+
+    .tenant-chip strong { color: var(--txt-primary); }
+
+    /* Payment submission form card */
+    .submit-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--r-lg);
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .submit-card__header {
+      background: var(--accent-pale);
+      border-bottom: 1px solid var(--accent-light);
+      padding: var(--sp-md) var(--sp-lg);
+    }
+
+    .submit-card__title {
+      font-size: .9rem;
+      font-weight: 700;
+      color: var(--clr-teal-dark);
+    }
+
+    .submit-card__body { padding: var(--sp-lg); }
+
+    /* History payment rows */
+    .history-item {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--r-md);
+      padding: var(--sp-md);
+      margin-bottom: var(--sp-sm);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .history-item__header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: var(--sp-xs);
+      gap: var(--sp-sm);
+    }
+
+    .history-item__period {
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--txt-primary);
+    }
+
+    .history-item__amount {
+      font-family: 'DM Serif Display', serif;
+      font-size: 1.15rem;
+      color: var(--accent-dark);
+      white-space: nowrap;
+    }
+
+    .history-item__meta {
+      font-size: .75rem;
+      color: var(--txt-muted);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px var(--sp-md);
+      margin-bottom: var(--sp-sm);
+    }
+
+    /* Code login input */
+    .code-input {
+      text-align: center;
+      font-size: 1.3rem;
+      letter-spacing: .35em;
+      text-transform: uppercase;
+      font-weight: 600;
+      border: 2px solid var(--border);
+      border-radius: var(--r-md);
+      padding: var(--sp-md);
+      width: 100%;
+    }
+
+    .code-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(14,138,107,.15);
+      outline: none;
+    }
+  </style>
+</head>
+<body class="page-shell">
+
+<!-- ══════════════════════════════════════════════════
+     LOGIN SCREEN
+════════════════════════════════════════════════════ -->
+<div id="login-screen" class="login-screen">
+  <div class="login-card">
+    <div class="login-card__logo">
+      <span class="login-card__property" data-property-name>Property</span>
+      <span class="login-card__role">Tenant Portal</span>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="code-input">Your tenant code</label>
+      <input
+        type="text"
+        id="code-input"
+        class="code-input"
+        placeholder="JJ-01"
+        maxlength="10"
+        autocomplete="username"
+        autocapitalize="characters"
+        spellcheck="false"
+        aria-label="Enter your tenant login code"
+      />
+      <span class="form-hint mt-sm">Your code was provided by your property admin.</span>
+    </div>
+
+    <p id="login-error" class="form-error hidden" role="alert">
+      Invalid code. Please check and try again.
+    </p>
+
+    <button class="btn btn-primary btn-full mt-md" id="login-btn" type="button">
+      View my account
+    </button>
+
+    <p class="text-center text-muted mt-md">
+      <a href="index.html">← Back to portal select</a>
+    </p>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════
+     AUTHENTICATED SHELL
+════════════════════════════════════════════════════ -->
+<div id="app-shell" class="hidden">
+
+  <!-- Top Bar -->
+  <header class="topbar" role="banner">
+    <span class="topbar__logo" data-property-name>Property</span>
+    <span class="topbar__role" id="topbar-unit"></span>
+    <button class="topbar__btn" id="logout-btn" type="button">Sign out</button>
+  </header>
+
+  <!-- Navigation Tabs -->
+  <nav class="nav-tabs" role="tablist" aria-label="Tenant sections">
+    <button class="nav-tab active" role="tab" data-tab="home"    aria-selected="true">My Account</button>
+    <button class="nav-tab"        role="tab" data-tab="billing" aria-selected="false">Billing</button>
+    <button class="nav-tab"        role="tab" data-tab="pay"     aria-selected="false">Pay</button>
+    <button class="nav-tab"        role="tab" data-tab="history" aria-selected="false">History</button>
+  </nav>
+
+  <!-- ── TAB: HOME / DASHBOARD ──────────────────────── -->
+  <section id="tab-home" class="content-area" role="tabpanel" aria-label="My Account">
+
+    <!-- Balance hero -->
+    <div class="balance-hero" id="balance-hero">
+      <div class="balance-hero__label">Current balance due</div>
+      <div class="balance-hero__amount" id="hero-amount">—</div>
+      <div class="balance-hero__due"   id="hero-due"></div>
+      <div class="balance-hero__last"  id="hero-last"></div>
+    </div>
+
+    <!-- Tenant info chips -->
+    <div class="tenant-chips" id="tenant-chips"></div>
+
+    <!-- Current month billing snapshot -->
+    <p class="section-title">This month's bill</p>
+    <div id="home-billing-card">
+      <div class="skeleton-card"></div>
+    </div>
+
+    <!-- Pay now shortcut -->
+    <button class="btn btn-primary btn-full mt-md" type="button" id="btn-pay-now">
+      Submit a payment
+    </button>
+
+  </section>
+
+  <!-- ── TAB: BILLING DETAIL ────────────────────────── -->
+  <section id="tab-billing" class="content-area hidden" role="tabpanel" aria-label="Billing">
+
+    <div class="section-header">
+      <h2>Billing history</h2>
+    </div>
+
+    <div id="billing-list">
+      <div class="skeleton-card"></div>
+      <div class="skeleton-card"></div>
+    </div>
+
+  </section>
+
+  <!-- ── TAB: SUBMIT PAYMENT ────────────────────────── -->
+  <section id="tab-pay" class="content-area hidden" role="tabpanel" aria-label="Submit Payment">
+
+    <div class="section-header">
+      <h2>Submit payment</h2>
+    </div>
+
+    <p class="text-muted mb-md" style="font-size:.875rem">
+      Fill in the details below. Your payment will be reviewed and confirmed by your property admin.
+      You'll receive a receipt by email once approved.
+    </p>
+
+    <div class="submit-card">
+      <div class="submit-card__header">
+        <div class="submit-card__title">Payment details</div>
+      </div>
+      <div class="submit-card__body">
+
+        <div class="form-group">
+          <label class="form-label" for="pay-billing">Billing period <span class="required">*</span></label>
+          <select id="pay-billing" class="form-select">
+            <option value="">Loading…</option>
+          </select>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="pay-amount">Amount paid (₱) <span class="required">*</span></label>
+            <input type="number" id="pay-amount" class="form-input" placeholder="0.00" min="1" step="0.01" inputmode="decimal" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="pay-date">Payment date <span class="required">*</span></label>
+            <input type="date" id="pay-date" class="form-input" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="pay-method">Payment method <span class="required">*</span></label>
+          <select id="pay-method" class="form-select">
+            <option value="">— select —</option>
+            <option value="GCash">GCash</option>
+            <option value="Cash">Cash</option>
+            <option value="Bank Transfer">Bank Transfer</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="pay-ref">Reference number</label>
+          <input type="text" id="pay-ref" class="form-input" placeholder="GCash ref, bank ref no., etc." />
+          <span class="form-hint">Required for GCash and bank transfers.</span>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="pay-proof">Proof of payment (Google Drive link)</label>
+          <input type="url" id="pay-proof" class="form-input" placeholder="https://drive.google.com/…" inputmode="url" />
+          <span class="form-hint">Upload your screenshot to Google Drive and paste the shareable link here.</span>
+        </div>
+
+        <button class="btn btn-primary btn-full" type="button" id="btn-submit-payment">
+          Submit for approval
+        </button>
+
+      </div>
+    </div>
+
+    <div class="card card--teal mt-md">
+      <p style="font-size:.8rem;color:var(--clr-teal-dark);">
+        <strong>What happens next?</strong><br>
+        Your admin will review your submission and approve it. Once approved, your balance will update
+        and a receipt will be sent to your registered email address.
+      </p>
+    </div>
+
+  </section>
+
+  <!-- ── TAB: PAYMENT HISTORY ───────────────────────── -->
+  <section id="tab-history" class="content-area hidden" role="tabpanel" aria-label="Payment History">
+
+    <div class="section-header">
+      <h2>Payment history</h2>
+    </div>
+
+    <div id="history-list">
+      <div class="skeleton-card"></div>
+      <div class="skeleton-card"></div>
+    </div>
+
+  </section>
+
+</div><!-- /#app-shell -->
+
+<!-- ══════════════════════════════════════════════════
+     RECEIPT MODAL
+════════════════════════════════════════════════════ -->
+<dialog id="modal-receipt" aria-labelledby="modal-receipt-title">
+  <div class="dialog-header">
+    <h2 id="modal-receipt-title">Receipt</h2>
+    <button class="dialog-close" type="button" onclick="closeModal('modal-receipt')" aria-label="Close">✕</button>
+  </div>
+  <div class="dialog-body" id="receipt-body">
+    <!-- Populated dynamically -->
+  </div>
+  <div class="dialog-footer no-print">
+    <button class="btn btn-ghost"      type="button" onclick="closeModal('modal-receipt')">Close</button>
+    <button class="btn btn-secondary"  type="button" onclick="window.print()">🖨 Print</button>
+  </div>
+</dialog>
+
+<script src="api.js"></script>
+<script src="tenant.js"></script>
+</body>
+</html>

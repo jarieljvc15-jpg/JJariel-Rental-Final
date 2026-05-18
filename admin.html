@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Loading…</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="page-shell">
+
+<!-- ══════════════════════════════════════════════════
+     LOGIN SCREEN
+════════════════════════════════════════════════════ -->
+<div id="login-screen" class="login-screen">
+  <div class="login-card">
+    <div class="login-card__logo">
+      <span class="login-card__property" data-property-name>Property</span>
+      <span class="login-card__role">Admin Portal</span>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="pin-input">Admin PIN</label>
+      <input
+        type="password"
+        inputmode="numeric"
+        id="pin-input"
+        class="pin-input"
+        placeholder="••••"
+        maxlength="6"
+        autocomplete="current-password"
+        aria-label="Enter admin PIN"
+      />
+    </div>
+
+    <p id="login-error" class="form-error hidden" role="alert">Incorrect PIN. Try again.</p>
+
+    <button class="btn btn-primary btn-full mt-md" id="login-btn" type="button">
+      Sign In
+    </button>
+
+    <p class="text-center text-muted mt-md">
+      <a href="index.html">← Back to portal select</a>
+    </p>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════
+     AUTHENTICATED SHELL (hidden until login)
+════════════════════════════════════════════════════ -->
+<div id="app-shell" class="hidden">
+
+  <!-- Top Bar -->
+  <header class="topbar" role="banner">
+    <span class="topbar__logo" data-property-name>Property</span>
+    <span class="topbar__role">Admin</span>
+    <button class="topbar__btn" id="refresh-btn" type="button" aria-label="Refresh data">↻</button>
+    <button class="topbar__btn" id="logout-btn"  type="button">Sign out</button>
+  </header>
+
+  <!-- Navigation Tabs -->
+  <nav class="nav-tabs" role="tablist" aria-label="Admin sections">
+    <button class="nav-tab active" role="tab" data-tab="dashboard"  aria-selected="true">Dashboard</button>
+    <button class="nav-tab"        role="tab" data-tab="tenants"    aria-selected="false">Tenants</button>
+    <button class="nav-tab"        role="tab" data-tab="billing"    aria-selected="false">Billing</button>
+    <button class="nav-tab"        role="tab" data-tab="payments"   aria-selected="false">Payments</button>
+    <button class="nav-tab"        role="tab" data-tab="ledger"     aria-selected="false">Ledger</button>
+  </nav>
+
+  <!-- ── TAB: DASHBOARD ─────────────────────────────── -->
+  <section id="tab-dashboard" class="content-area" role="tabpanel" aria-label="Dashboard">
+
+    <div class="section-header">
+      <h2>Overview</h2>
+      <span id="dash-month" class="text-muted text-sm"></span>
+    </div>
+
+    <!-- Summary stat cards -->
+    <div class="summary-grid" id="dash-stats">
+      <div class="skeleton-card"></div>
+      <div class="skeleton-card"></div>
+      <div class="skeleton-card"></div>
+      <div class="skeleton-card"></div>
+    </div>
+
+    <!-- Quick actions -->
+    <div class="section-gap--sm">
+      <p class="section-title">Quick actions</p>
+      <div class="quick-actions">
+        <button class="quick-btn" type="button" data-action="log-payment">
+          <span class="quick-btn__icon">💳</span>Log Payment
+        </button>
+        <button class="quick-btn" type="button" data-action="add-tenant">
+          <span class="quick-btn__icon">➕</span>Add Tenant
+        </button>
+        <button class="quick-btn" type="button" data-action="meter-readings">
+          <span class="quick-btn__icon">⚡</span>Meter Readings
+        </button>
+      </div>
+    </div>
+
+    <!-- Recent activity -->
+    <div class="section-gap--sm">
+      <p class="section-title">Recent payments</p>
+      <div class="card card--flat" id="dash-activity">
+        <div class="skeleton-line"></div>
+        <div class="skeleton-line"></div>
+        <div class="skeleton-line"></div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ── TAB: TENANTS ───────────────────────────────── -->
+  <section id="tab-tenants" class="content-area hidden" role="tabpanel" aria-label="Tenants">
+
+    <div class="section-header">
+      <h2>Tenants</h2>
+      <button class="btn btn-primary btn-sm" type="button" id="btn-add-tenant">+ Add tenant</button>
+    </div>
+
+    <div id="tenants-list">
+      <div class="skeleton-card"></div>
+      <div class="skeleton-card"></div>
+    </div>
+
+  </section>
+
+  <!-- ── TAB: BILLING ───────────────────────────────── -->
+  <section id="tab-billing" class="content-area hidden" role="tabpanel" aria-label="Billing &amp; Readings">
+
+    <div class="section-header">
+      <h2>Meter Readings &amp; Billing</h2>
+    </div>
+
+    <div class="card card--flat mb-md">
+      <div class="form-row">
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label" for="billing-month">Billing month</label>
+          <input type="month" id="billing-month" class="form-input" />
+        </div>
+        <div class="form-group" style="margin-bottom:0;display:flex;align-items:flex-end">
+          <button class="btn btn-secondary btn-full" type="button" id="btn-load-readings">
+            Load tenants
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="readings-list"></div>
+
+    <div id="readings-footer" class="hidden">
+      <button class="btn btn-primary btn-full" type="button" id="btn-save-readings">
+        Save readings &amp; generate bills
+      </button>
+    </div>
+
+  </section>
+
+  <!-- ── TAB: PAYMENTS ─────────────────────────────── -->
+  <section id="tab-payments" class="content-area hidden" role="tabpanel" aria-label="Payments">
+
+    <div class="section-header">
+      <h2>Pending Approvals</h2>
+      <span id="pending-count-badge" class="badge badge-pending hidden"></span>
+    </div>
+
+    <div id="pending-list">
+      <div class="skeleton-card"></div>
+    </div>
+
+    <div class="section-gap">
+      <div class="section-header">
+        <h2>Payment History</h2>
+        <div class="d-flex gap-sm align-center">
+          <select id="history-tenant-filter" class="form-select" style="width:auto;font-size:.8rem;padding:7px 30px 7px 10px">
+            <option value="">All tenants</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-wrapper" id="history-table-wrap">
+        <div class="skeleton-line" style="margin:16px"></div>
+        <div class="skeleton-line" style="margin:16px;width:80%"></div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ── TAB: LEDGER ────────────────────────────────── -->
+  <section id="tab-ledger" class="content-area hidden" role="tabpanel" aria-label="Ledger">
+
+    <div class="section-header">
+      <h2>Running Ledger</h2>
+      <button class="btn btn-ghost btn-sm" type="button" id="btn-refresh-ledger">↻ Refresh</button>
+    </div>
+
+    <!-- Summary -->
+    <div class="summary-grid mb-md" id="ledger-summary">
+      <div class="skeleton-card"></div>
+      <div class="skeleton-card"></div>
+      <div class="skeleton-card"></div>
+    </div>
+
+    <!-- Filter pills -->
+    <div class="filter-pills">
+      <button class="filter-pill active" data-ledger-filter="all">All tenants</button>
+      <button class="filter-pill" data-ledger-filter="owing">With balance</button>
+      <button class="filter-pill" data-ledger-filter="clear">Fully paid</button>
+    </div>
+
+    <div id="ledger-list">
+      <div class="skeleton-card"></div>
+      <div class="skeleton-card"></div>
+    </div>
+
+  </section>
+
+</div><!-- /#app-shell -->
+
+<!-- ══════════════════════════════════════════════════
+     MODALS
+════════════════════════════════════════════════════ -->
+
+<!-- Log Payment Modal -->
+<dialog id="modal-log-payment" aria-labelledby="modal-log-payment-title">
+  <div class="dialog-header">
+    <h2 id="modal-log-payment-title">Log Payment</h2>
+    <button class="dialog-close" type="button" onclick="closeModal('modal-log-payment')" aria-label="Close">✕</button>
+  </div>
+  <div class="dialog-body">
+    <div class="form-group">
+      <label class="form-label" for="lp-tenant">Tenant <span class="required">*</span></label>
+      <select id="lp-tenant" name="tenant_id" class="form-select"></select>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="lp-billing">Billing period <span class="required">*</span></label>
+      <select id="lp-billing" name="billing_id" class="form-select">
+        <option value="">— select tenant first —</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="lp-amount">Amount (₱) <span class="required">*</span></label>
+        <input type="number" id="lp-amount" name="amount" class="form-input" placeholder="0.00" min="0" step="0.01" />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="lp-date">Date <span class="required">*</span></label>
+        <input type="date" id="lp-date" name="date" class="form-input" />
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="lp-method">Payment method <span class="required">*</span></label>
+      <select id="lp-method" name="method" class="form-select">
+        <option value="">— select —</option>
+        <option value="GCash">GCash</option>
+        <option value="Cash">Cash</option>
+        <option value="Bank Transfer">Bank Transfer</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="lp-ref">Reference number</label>
+      <input type="text" id="lp-ref" name="reference_no" class="form-input" placeholder="e.g. GCash ref or OR number" />
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="lp-note">Note</label>
+      <input type="text" id="lp-note" name="note" class="form-input" placeholder="Optional note" />
+    </div>
+  </div>
+  <div class="dialog-footer">
+    <button class="btn btn-ghost" type="button" onclick="closeModal('modal-log-payment')">Cancel</button>
+    <button class="btn btn-primary" type="button" id="btn-submit-log-payment">Log Payment</button>
+  </div>
+</dialog>
+
+<!-- Add / Edit Tenant Modal -->
+<dialog id="modal-tenant" aria-labelledby="modal-tenant-title">
+  <div class="dialog-header">
+    <h2 id="modal-tenant-title">Add Tenant</h2>
+    <button class="dialog-close" type="button" onclick="closeModal('modal-tenant')" aria-label="Close">✕</button>
+  </div>
+  <div class="dialog-body">
+    <input type="hidden" id="tenant-form-id" name="tenant_id" />
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="tf-name">Full name <span class="required">*</span></label>
+        <input type="text" id="tf-name" name="name" class="form-input" placeholder="Juan dela Cruz" />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="tf-unit">Unit / Room <span class="required">*</span></label>
+        <input type="text" id="tf-unit" name="unit" class="form-input" placeholder="Unit 3A" />
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="tf-room-type">Room type</label>
+        <input type="text" id="tf-room-type" name="room_type" class="form-input" placeholder="Studio / 1BR" />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="tf-move-in">Move-in date</label>
+        <input type="date" id="tf-move-in" name="move_in_date" class="form-input" />
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="tf-rent">Monthly rent (₱) <span class="required">*</span></label>
+        <input type="number" id="tf-rent" name="monthly_rent" class="form-input" placeholder="0.00" min="0" step="0.01" />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="tf-deposit">Deposit paid (₱)</label>
+        <input type="number" id="tf-deposit" name="deposit_paid" class="form-input" placeholder="0.00" min="0" step="0.01" />
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="tf-email">Email</label>
+        <input type="email" id="tf-email" name="email" class="form-input" placeholder="tenant@email.com" />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="tf-contact">Contact number</label>
+        <input type="tel" id="tf-contact" name="contact" class="form-input" placeholder="09XX XXX XXXX" />
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="tf-login-code">Login code</label>
+        <input type="text" id="tf-login-code" name="login_code" class="form-input" placeholder="Auto-generated" />
+        <span class="form-hint">Leave blank to auto-assign (e.g. JJ-04)</span>
+      </div>
+      <div class="form-group" id="tf-status-group">
+        <label class="form-label" for="tf-status">Status</label>
+        <select id="tf-status" name="status" class="form-select">
+          <option value="active">Active</option>
+          <option value="moved-out">Moved out</option>
+        </select>
+      </div>
+    </div>
+    <div id="tf-moveout-row" class="form-group hidden">
+      <label class="form-label" for="tf-move-out">Move-out date</label>
+      <input type="date" id="tf-move-out" name="move_out_date" class="form-input" />
+    </div>
+  </div>
+  <div class="dialog-footer">
+    <button class="btn btn-ghost" type="button" onclick="closeModal('modal-tenant')">Cancel</button>
+    <button class="btn btn-primary" type="button" id="btn-submit-tenant">Save tenant</button>
+  </div>
+</dialog>
+
+<!-- Approve / Reject Payment Modal -->
+<dialog id="modal-approve" aria-labelledby="modal-approve-title">
+  <div class="dialog-header">
+    <h2 id="modal-approve-title">Review Payment</h2>
+    <button class="dialog-close" type="button" onclick="closeModal('modal-approve')" aria-label="Close">✕</button>
+  </div>
+  <div class="dialog-body">
+    <input type="hidden" id="approve-payment-id" />
+    <div id="approve-detail" class="mb-md"></div>
+    <div class="form-group">
+      <label class="form-label" for="approve-note">Note (optional)</label>
+      <input type="text" id="approve-note" class="form-input" placeholder="Add a note for the tenant" />
+    </div>
+  </div>
+  <div class="dialog-footer">
+    <button class="btn btn-ghost" type="button" onclick="closeModal('modal-approve')">Cancel</button>
+    <button class="btn btn-danger"   type="button" id="btn-reject">Reject</button>
+    <button class="btn btn-success"  type="button" id="btn-approve">Approve &amp; send receipt</button>
+  </div>
+</dialog>
+
+<!-- Receipt View Modal -->
+<dialog id="modal-receipt" aria-labelledby="modal-receipt-title">
+  <div class="dialog-header">
+    <h2 id="modal-receipt-title">Receipt</h2>
+    <button class="dialog-close" type="button" onclick="closeModal('modal-receipt')" aria-label="Close">✕</button>
+  </div>
+  <div class="dialog-body" id="receipt-view-body">
+    <!-- Populated dynamically -->
+  </div>
+  <div class="dialog-footer no-print">
+    <button class="btn btn-ghost" type="button" onclick="closeModal('modal-receipt')">Close</button>
+    <button class="btn btn-secondary" type="button" onclick="window.print()">🖨 Print</button>
+  </div>
+</dialog>
+
+<script src="api.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

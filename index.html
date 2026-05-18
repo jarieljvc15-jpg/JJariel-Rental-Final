@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Rental Management System" />
+  <title>Loading…</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="style.css" />
+
+  <style>
+    /* Landing-specific tweaks */
+    .landing__orb {
+      width: 180px;
+      height: 180px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 40% 40%, var(--clr-teal-light), var(--clr-teal-pale));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto var(--sp-xl);
+      box-shadow: 0 0 0 16px var(--clr-teal-pale), 0 0 0 32px rgba(208,240,230,.25);
+      font-size: 4rem;
+      position: relative;
+    }
+
+    .landing__orb::after {
+      content: '';
+      position: absolute;
+      inset: -4px;
+      border-radius: 50%;
+      border: 1.5px solid var(--clr-teal-light);
+      opacity: .6;
+    }
+
+    .landing__version {
+      display: inline-block;
+      margin-bottom: var(--sp-lg);
+      background: var(--accent-pale);
+      color: var(--clr-teal-dark);
+      border: 1px solid var(--accent-light);
+      border-radius: var(--r-pill);
+      font-size: .7rem;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      padding: 4px 14px;
+    }
+
+    /* Animate cards in on load */
+    .portal-card {
+      opacity: 0;
+      transform: translateY(16px);
+      animation: cardIn var(--dur-mid) var(--ease) forwards;
+    }
+
+    .portal-card:nth-child(2) { animation-delay: 80ms; }
+
+    @keyframes cardIn {
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .landing__status {
+      display: flex;
+      align-items: center;
+      gap: var(--sp-sm);
+      justify-content: center;
+      margin-top: var(--sp-lg);
+      font-size: .78rem;
+      color: var(--txt-muted);
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--clr-ink-15);
+      flex-shrink: 0;
+    }
+
+    .status-dot.online  { background: var(--clr-green); }
+    .status-dot.offline { background: var(--clr-red); }
+    .status-dot.loading {
+      background: var(--clr-amber);
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: .4; }
+    }
+  </style>
+</head>
+<body>
+
+<main class="landing" id="landing">
+
+  <!-- Property orb / icon -->
+  <div class="landing__orb" aria-hidden="true">🏠</div>
+
+  <!-- Version pill -->
+  <span class="landing__version">Rental Management System</span>
+
+  <!-- Property name — filled dynamically from Config sheet -->
+  <h1 class="landing__brand" data-property-name>…</h1>
+  <p class="landing__tagline">Choose your portal to continue</p>
+
+  <!-- Portal entry cards -->
+  <div class="landing__cards" id="portal-cards">
+
+    <a href="admin.html" class="portal-card" id="card-admin" aria-label="Go to Admin Portal">
+      <div class="portal-card__icon" aria-hidden="true">🔐</div>
+      <div>
+        <span class="portal-card__title">Admin Portal</span>
+        <span class="portal-card__desc">Dashboard, billing, tenants &amp; approvals</span>
+      </div>
+    </a>
+
+    <a href="tenant.html" class="portal-card" id="card-tenant" aria-label="Go to Tenant Portal">
+      <div class="portal-card__icon" aria-hidden="true">🏡</div>
+      <div>
+        <span class="portal-card__title">Tenant Portal</span>
+        <span class="portal-card__desc">View balance, submit payments &amp; receipts</span>
+      </div>
+    </a>
+
+  </div>
+
+  <!-- Live connectivity status -->
+  <div class="landing__status" id="status-line" aria-live="polite">
+    <span class="status-dot loading" id="status-dot"></span>
+    <span id="status-text">Connecting to property data…</span>
+  </div>
+
+  <p class="landing__footer">
+    &copy; <span id="footer-year"></span>
+    <span data-property-name>Property</span> &mdash; All rights reserved
+  </p>
+
+</main>
+
+<script src="api.js"></script>
+<script>
+  // ── Boot ────────────────────────────────────────────────────────────────────
+  (async function init() {
+    // Set footer year
+    document.getElementById('footer-year').textContent = new Date().getFullYear();
+
+    const dot  = document.getElementById('status-dot');
+    const txt  = document.getElementById('status-text');
+
+    try {
+      const cfg = await apiGetConfig();
+
+      // Inject property name everywhere
+      applyPropertyName(cfg.property_name || 'My Property', '');
+
+      // Mark online
+      dot.className  = 'status-dot online';
+      txt.textContent = 'Connected — select a portal above';
+
+    } catch (err) {
+      // Config fetch failed — still show portals, just flag offline
+      dot.className  = 'status-dot offline';
+      txt.textContent = 'Could not reach property data. Check your connection.';
+
+      // Show placeholder name so page isn't blank
+      applyPropertyName('My Property', '');
+
+      console.error('Config fetch failed:', err);
+    }
+  })();
+</script>
+
+</body>
+</html>
