@@ -235,19 +235,31 @@ function respond(success, data, error) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-function loadConfig() {
-  var cached = cacheGetJson('config');
-  if (cached) return cached;
+function loadConfig(options) {
+  options = options || {};
+  var bypassCache = options.bypassCache === true;
+
+  if (!bypassCache) {
+    var cached = cacheGetJson('config');
+    if (cached) return cached;
+  }
 
   var rows = sheetToObjects(SHEET.CONFIG);
   var cfg  = {};
   rows.forEach(function(r) { cfg[r.key] = r.value; });
-  cachePutJson('config', null, cfg, CACHE_SECONDS.CONFIG);
+
+  if (!bypassCache) {
+    cachePutJson('config', null, cfg, CACHE_SECONDS.CONFIG);
+  }
+
   return cfg;
 }
 
 function validateAdmin(body) {
-  var cfg = loadConfig();
+  // Admin credentials are security-sensitive and may be rotated directly in
+  // the Config sheet, so always validate against a fresh sheet read instead
+  // of the long-lived config cache.
+  var cfg = loadConfig({ bypassCache: true });
   return String(body.admin_pin) === String(cfg.admin_pin);
 }
 
@@ -263,7 +275,7 @@ function validateTenant(body) {
 // ACTION: getConfig
 // ---------------------------------------------------------------------------
 function getConfig(body) {
-  var cfg = loadConfig();
+  var cfg = loadConfig({ bypassCache: body && body.bust_cache === true });
   return respond(true, cfg);
 }
 

@@ -156,7 +156,7 @@ async function apiGetConfig(bustCache = false) {
       return cached;
     }
   }
-  const data = await _post({ action: 'getConfig' });
+  const data = await _post({ action: 'getConfig', bust_cache: bustCache === true });
   const persistedConfig = { ...data };
   delete persistedConfig.admin_pin;
   _cacheSet(key, data, _CONFIG_CACHE_TTL);
