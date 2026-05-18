@@ -12,7 +12,6 @@
 
   <link rel="stylesheet" href="style.css" />
   <style>
-    /* Stat card subtitle — shown under the value for contextual figures */
     .stat-card__sub {
       font-size: .68rem;
       color: var(--txt-muted);
@@ -20,6 +19,11 @@
       font-weight: 400;
       letter-spacing: 0;
       text-transform: none;
+    }
+    .chart-mode-btn.active {
+      background: var(--accent);
+      color: var(--clr-white);
+      border-color: var(--accent);
     }
   </style>
 </head>
@@ -116,6 +120,34 @@
         <button class="quick-btn" type="button" data-action="send-reminders" id="btn-send-reminders">
           <span class="quick-btn__icon">🔔</span>Send Reminders
         </button>
+      </div>
+    </div>
+
+    <!-- Collection stats chart -->
+    <div class="section-gap--sm">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--sp-sm)">
+        <p class="section-title" style="margin:0">Collections &amp; Billing</p>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-ghost btn-sm chart-mode-btn active" data-mode="daily"   onclick="switchChartMode('daily')">Daily</button>
+          <button class="btn btn-ghost btn-sm chart-mode-btn"        data-mode="weekly"  onclick="switchChartMode('weekly')">Weekly</button>
+          <button class="btn btn-ghost btn-sm chart-mode-btn"        data-mode="monthly" onclick="switchChartMode('monthly')">Monthly</button>
+        </div>
+      </div>
+
+      <!-- Bar chart -->
+      <div class="card card--flat" style="padding:var(--sp-md) var(--sp-sm) var(--sp-sm)">
+        <div id="chart-container" style="width:100%;overflow-x:auto">
+          <canvas id="collection-chart" style="display:block;width:100%;max-height:200px"></canvas>
+        </div>
+        <div style="display:flex;gap:var(--sp-md);justify-content:center;margin-top:var(--sp-sm);font-size:.72rem;color:var(--txt-muted)">
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#1aab85;margin-right:4px"></span>Collected</span>
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#c0d8f0;margin-right:4px"></span>Billed</span>
+        </div>
+      </div>
+
+      <!-- Summary table -->
+      <div class="table-wrapper" id="chart-table" style="margin-top:var(--sp-sm)">
+        <div class="skeleton-line" style="margin:12px"></div>
       </div>
     </div>
 
@@ -528,8 +560,9 @@
     <!-- Populated dynamically -->
   </div>
   <div class="dialog-footer no-print">
-    <button class="btn btn-ghost" type="button" onclick="closeModal('modal-receipt')">Close</button>
-    <button class="btn btn-secondary" type="button" onclick="window.print()">🖨 Print</button>
+    <button class="btn btn-ghost"      type="button" onclick="closeModal('modal-receipt')">Close</button>
+    <button class="btn btn-secondary"  type="button" id="btn-resend-receipt" onclick="resendReceiptEmail()">✉ Resend Email</button>
+    <button class="btn btn-secondary"  type="button" onclick="window.print()">🖨 Print</button>
   </div>
 </dialog>
 
