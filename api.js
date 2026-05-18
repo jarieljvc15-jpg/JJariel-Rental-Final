@@ -18,16 +18,17 @@ const GAS_URL = 'https://script.google.com/macros/s/AKfycbwdpGB9qQHIWh5V5EPdcSHu
 // always fetches fresh data from Sheets.
 // ---------------------------------------------------------------------------
 const _cache = {};
-const _CACHE_TTL_MS = 60 * 1000; // 60 seconds per entry
+const _CACHE_TTL_MS      = 60 * 1000;       // 60 s for most data
+const _CONFIG_CACHE_TTL  = 24 * 60 * 60 * 1000; // config: effectively the whole session
 
-function _cacheSet(key, value) {
-  _cache[key] = { value, ts: Date.now() };
+function _cacheSet(key, value, ttl) {
+  _cache[key] = { value, ts: Date.now(), ttl: ttl || _CACHE_TTL_MS };
 }
 
 function _cacheGet(key) {
   const entry = _cache[key];
   if (!entry) return null;
-  if (Date.now() - entry.ts > _CACHE_TTL_MS) {
+  if (Date.now() - entry.ts > entry.ttl) {
     delete _cache[key];
     return null;
   }
@@ -40,6 +41,12 @@ function _cacheClear(key) {
   } else {
     Object.keys(_cache).forEach(k => delete _cache[k]);
   }
+}
+
+// Public alias — call apiClearCache() to invalidate everything,
+// or apiClearCache('config') to force a fresh config fetch.
+function apiClearCache(key) {
+  _cacheClear(key);
 }
 
 // ---------------------------------------------------------------------------
@@ -69,6 +76,12 @@ async function _post(payload) {
   return json.data;
 }
 
+// Public wrapper for one-off actions that don't need dedicated functions.
+// Never caches. Usage: await apiPost({ action: 'myAction', admin_pin: pin, ...fields })
+async function apiPost(payload) {
+  return _post(payload);
+}
+
 // ---------------------------------------------------------------------------
 // PUBLIC API METHODS
 // Each method maps 1-to-1 with a Code.gs action.
@@ -91,7 +104,7 @@ async function apiGetConfig(bustCache = false) {
     if (cached) return cached;
   }
   const data = await _post({ action: 'getConfig' });
-  _cacheSet(key, data);
+  _cacheSet(key, data, _CONFIG_CACHE_TTL); // config cached for the full session
   return data;
 }
 
@@ -302,11 +315,49 @@ async function apiLogPayment(adminPin, paymentData) {
   _cacheClear('ledger');
   _cacheClear('dashboard');
   _cacheClear('pending');
+  _cacheClear('all_payments');
   return data;
 }
 
 /**
- * Admin approves a pending payment. Triggers receipt generation and email.
+ * Returns ALL payment rows joined with tenant name/unit, newest first.
+ * Admin only. Used by the All Transactions tab.
+ * @param {string} adminPin
+ * @param {boolean} [bustCache]
+ */
+async function apiGetAllPayments(adminPin, bustCache = false) {
+  const key = 'all_payments';
+  if (!bustCache) {
+    const cached = _cacheGet(key);
+    if (cached) return cached;
+  }
+  const data = await _post({ action: 'getAllPayments', admin_pin: adminPin });
+  _cacheSet(key, data);
+  return data;
+}
+
+/**
+ * Admin logs a flexible payment spanning multiple billing periods.
+ * Any excess beyond selected periods is stored as a credit in the Ledger sheet.
+ * @param {string} adminPin
+ * @param {Object} paymentData  { tenant_id, amount, date, method, reference_no, note, selected_periods[] }
+ */
+async function apiLogFlexiblePayment(adminPin, paymentData) {
+  const data = await _post({
+    action: 'logFlexiblePayment',
+    admin_pin: adminPin,
+    ...paymentData
+  });
+  _cacheClear(`payments:${paymentData.tenant_id}`);
+  _cacheClear(`billing:${paymentData.tenant_id}`);
+  _cacheClear('ledger');
+  _cacheClear('dashboard');
+  _cacheClear('pending');
+  _cacheClear('all_payments');
+  return data;
+}
+
+/**
  * @param {string} adminPin
  * @param {string} paymentId
  * @param {string} [note]
@@ -322,6 +373,7 @@ async function apiApprovePayment(adminPin, paymentId, note = '') {
   _cacheClear('pending');
   _cacheClear('ledger');
   _cacheClear('dashboard');
+  _cacheClear('all_payments');
   Object.keys(_cache).forEach(k => {
     if (k.startsWith('payments:') || k.startsWith('billing:')) _cacheClear(k);
   });
