@@ -29,8 +29,7 @@ var CACHE_KEY_PREFIX = 'jjrms:';
 var CACHE_SECONDS = {
   CONFIG: 21600,       // 6 hours
   DASHBOARD: 30,       // dashboard numbers change after payments/readings
-  LISTS: 60,
-  LEDGER: 60,
+  LISTS: 30,
   COLLECTION: 60
 };
 
@@ -63,10 +62,8 @@ function invalidateReadCaches() {
   try {
     var cache = CacheService.getScriptCache();
     cache.remove(cacheKey('config'));
-    cache.remove(cacheKey('tenants'));
     cache.remove(cacheKey('pendingPayments'));
     cache.remove(cacheKey('allPayments'));
-    cache.remove(cacheKey('ledger'));
     cache.remove(cacheKey('collectionStats', 'daily'));
     cache.remove(cacheKey('collectionStats', 'weekly'));
     cache.remove(cacheKey('collectionStats', 'monthly'));
@@ -287,12 +284,7 @@ function getConfig(body) {
 // ---------------------------------------------------------------------------
 function getAllTenants(body) {
   if (!validateAdmin(body)) return respond(false, null, 'Unauthorized');
-
-  var cached = cacheGetJson('tenants');
-  if (cached) return respond(true, cached);
-
   var tenants = sheetToObjects(SHEET.TENANTS);
-  cachePutJson('tenants', null, tenants, CACHE_SECONDS.LISTS);
   return respond(true, tenants);
 }
 
@@ -397,9 +389,6 @@ function getPaymentHistory(body) {
 function getLedger(body) {
   if (!validateAdmin(body)) return respond(false, null, 'Unauthorized');
 
-  var cached = cacheGetJson('ledger');
-  if (cached) return respond(true, cached);
-
   var rawTenants  = getSheetData(SHEET.TENANTS);
   var rawBillings = getSheetData(SHEET.BILLING);
   var rawPayments = getSheetData(SHEET.PAYMENTS);
@@ -460,9 +449,7 @@ function getLedger(body) {
     tenants_fully_paid:   ledger.filter(function(t){ return t.outstanding <= 0; }).length
   };
 
-  var payload = { summary: summary, ledger: ledger };
-  cachePutJson('ledger', null, payload, CACHE_SECONDS.LEDGER);
-  return respond(true, payload);
+  return respond(true, { summary: summary, ledger: ledger });
 }
 
 // ---------------------------------------------------------------------------
