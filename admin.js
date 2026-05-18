@@ -6,14 +6,25 @@
 // ---------------------------------------------------------------------------
 // STATE
 // ---------------------------------------------------------------------------
-let _pin        = '';          // admin PIN held in memory for the session
-let _cfg        = {};          // config from Sheets
-let _tenants    = [];          // all tenants (active + moved-out)
-let _ledgerData = null;        // full ledger response
-let _pendingPayments = [];     // pending approval queue
-let _allPayments     = [];     // payment history (admin view)
+let _pin        = '';
+let _cfg        = {};
+let _tenants    = [];
+let _ledgerData = null;
+let _pendingPayments  = [];
+let _allPayments      = [];
+let _allTransactions  = [];   // full payment log for Transactions tab
+let _recentPayments   = [];   // copy of last dashboard recent payments for client filter
+let _txnFiltered      = [];   // currently filtered transactions
 let _activeTab  = 'dashboard';
 let _ledgerFilter = 'all';
+
+const _loaded = {
+  dashboard:    false,
+  tenants:      false,
+  payments:     false,
+  ledger:       false,
+  transactions: false,
+};
 
 // ---------------------------------------------------------------------------
 // BOOT
@@ -71,6 +82,7 @@ let _ledgerFilter = 'all';
   // Log payment modal
   document.getElementById('btn-submit-log-payment').addEventListener('click', submitLogPayment);
   document.getElementById('lp-tenant').addEventListener('change', onLogPaymentTenantChange);
+  document.getElementById('lp-amount').addEventListener('input', onLogPaymentAmountChange);
 
   // Move-out date reveal
   document.getElementById('tf-status').addEventListener('change', function () {
@@ -83,6 +95,9 @@ let _ledgerFilter = 'all';
 
   // History filter
   document.getElementById('history-tenant-filter').addEventListener('change', renderPaymentHistory);
+
+  // Transactions tab
+  document.getElementById('btn-export-csv').addEventListener('click', exportTransactionsCSV);
 
   // Payments tab – add tenant
   document.getElementById('btn-add-tenant').addEventListener('click', openAddTenant);
@@ -131,7 +146,11 @@ function logout() {
   _cfg = {};
   _tenants = [];
   _ledgerData = null;
+  _allTransactions = [];
+  _recentPayments  = [];
+  _txnFiltered     = [];
   _cacheClear();
+  Object.keys(_loaded).forEach(k => _loaded[k] = false);
   document.getElementById('app-shell').classList.add('hidden');
   document.getElementById('login-screen').classList.remove('hidden');
   document.getElementById('pin-input').value = '';
@@ -158,11 +177,23 @@ function switchTab(tabName) {
 
 async function loadActiveTab(bustCache = false) {
   switch (_activeTab) {
-    case 'dashboard': return loadDashboard(bustCache);
-    case 'tenants':   return loadTenants(bustCache);
-    case 'billing':   return;  // billing loads on user action
-    case 'payments':  return loadPaymentsTab(bustCache);
-    case 'ledger':    return loadLedger(bustCache);
+    case 'dashboard':
+      if (bustCache || !_loaded.dashboard) return loadDashboard(bustCache);
+      break;
+    case 'tenants':
+      if (bustCache || !_loaded.tenants) return loadTenants(bustCache);
+      break;
+    case 'billing':
+      break;
+    case 'payments':
+      if (bustCache || !_loaded.payments) return loadPaymentsTab(bustCache);
+      break;
+    case 'transactions':
+      if (bustCache || !_loaded.transactions) return loadTransactionsTab(bustCache);
+      break;
+    case 'ledger':
+      if (bustCache || !_loaded.ledger) return loadLedger(bustCache);
+      break;
   }
 }
 
@@ -173,6 +204,7 @@ async function loadDashboard(bustCache = false) {
   try {
     const data = await apiGetDashboard(_pin, null, bustCache);
     renderDashboard(data);
+    _loaded.dashboard = true;
   } catch (e) {
     document.getElementById('dash-stats').innerHTML =
       `<div class="empty-state"><p class="empty-state__msg">${esc(e.message)}</p></div>`;
@@ -186,8 +218,15 @@ function renderDashboard(data) {
   document.getElementById('dash-stats').innerHTML = `
     <div class="stat-card">
       <div class="stat-card__icon">💰</div>
-      <div class="stat-card__label">Collected this month</div>
-      <div class="stat-card__value">${formatPeso(data.collected_month)}</div>
+      <div class="stat-card__label">Collected (payment date)</div>
+      <div class="stat-card__value">${formatPeso(data.collected_by_payment_date ?? data.collected_month)}</div>
+      <div class="stat-card__sub">Payments dated this month</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-card__icon">✅</div>
+      <div class="stat-card__label">Collected (approval date)</div>
+      <div class="stat-card__value">${formatPeso(data.collected_by_logged_date ?? 0)}</div>
+      <div class="stat-card__sub">Approved/logged this month</div>
     </div>
     <div class="stat-card">
       <div class="stat-card__icon">🕐</div>
@@ -207,14 +246,45 @@ function renderDashboard(data) {
   `;
 
   // Recent activity feed
+  _recentPayments = data.recent_payments || [];
+  filterRecentPayments();
+}
+
+// ---------------------------------------------------------------------------
+// DASHBOARD — Recent Payments filter
+// ---------------------------------------------------------------------------
+function filterRecentPayments() {
+  const name = (document.getElementById('dash-filter-name')?.value || '').toLowerCase();
+  const date = document.getElementById('dash-filter-date')?.value || '';
+
+  const filtered = _recentPayments.filter(p => {
+    const nameMatch = !name ||
+      (p.tenant_name || '').toLowerCase().includes(name) ||
+      (p.unit        || '').toLowerCase().includes(name);
+    const dateMatch = !date || String(p.date).startsWith(date);
+    return nameMatch && dateMatch;
+  });
+
+  renderRecentPayments(filtered);
+}
+
+function clearRecentPaymentsFilter() {
+  const nameEl = document.getElementById('dash-filter-name');
+  const dateEl = document.getElementById('dash-filter-date');
+  if (nameEl) nameEl.value = '';
+  if (dateEl) dateEl.value = '';
+  renderRecentPayments(_recentPayments);
+}
+
+function renderRecentPayments(rows) {
   const actEl = document.getElementById('dash-activity');
-  if (!data.recent_payments || data.recent_payments.length === 0) {
-    actEl.innerHTML = `<div class="empty-state"><p class="empty-state__msg">No payment activity yet.</p></div>`;
+  if (!rows || !rows.length) {
+    actEl.innerHTML = `<div class="empty-state"><p class="empty-state__msg">No matching payments.</p></div>`;
     return;
   }
-
-  actEl.innerHTML = data.recent_payments.map(p => `
-    <div class="activity-item">
+  actEl.innerHTML = rows.map(p => `
+    <div class="activity-item" style="cursor:pointer"
+      onclick='openPaymentDrawer(${JSON.stringify(p)})'>
       <div class="activity-dot activity-dot--${p.status === 'pending' ? 'pending' : p.status === 'rejected' ? 'rejected' : ''}"></div>
       <div class="activity-info">
         <div class="activity-name">${esc(p.tenant_name)} — ${esc(p.unit)}</div>
@@ -234,6 +304,7 @@ async function loadTenants(bustCache = false) {
   try {
     _tenants = await apiGetAllTenants(_pin, bustCache);
     renderTenants();
+    _loaded.tenants = true;
   } catch (e) {
     el.innerHTML = `<div class="empty-state"><p class="empty-state__msg">${esc(e.message)}</p></div>`;
   }
@@ -362,6 +433,8 @@ async function submitTenantForm() {
       showToast('Tenant added.', 'success');
     }
     closeModal('modal-tenant');
+    _loaded.tenants   = false;
+    _loaded.dashboard = false;
     await loadTenants(true);
     // Refresh tenant dropdown in Log Payment modal
     populateLogPaymentTenants();
@@ -595,6 +668,7 @@ async function loadPaymentsTab(bustCache = false) {
     loadPendingPayments(bustCache),
     loadPaymentHistory(bustCache)
   ]);
+  _loaded.payments = true;
 }
 
 async function loadPendingPayments(bustCache = false) {
@@ -801,6 +875,9 @@ async function submitApproval(action) {
       showToast('Payment rejected.', 'info');
     }
     closeModal('modal-approve');
+    _loaded.dashboard    = false;
+    _loaded.ledger       = false;
+    _loaded.transactions = false;
     await loadPaymentsTab(true);
   } catch (e) {
     showToast(e.message, 'error');
@@ -873,6 +950,205 @@ function buildReceiptHTML(r) {
 }
 
 // ---------------------------------------------------------------------------
+// PAYMENT DETAIL DRAWER
+// ---------------------------------------------------------------------------
+function openPaymentDrawer(p) {
+  const body = document.getElementById('drawer-body');
+  body.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:var(--sp-sm)">
+      <div style="display:flex;justify-content:space-between;align-items:center;
+                  padding:var(--sp-md);background:var(--bg-topbar);
+                  border-radius:var(--r-md);margin-bottom:var(--sp-sm)">
+        <div>
+          <div style="font-weight:700;font-size:1rem;color:var(--clr-white)">${esc(p.tenant_name || '—')}</div>
+          <div style="font-size:.8rem;color:var(--clr-teal-light)">${esc(p.unit || '')}</div>
+        </div>
+        <div style="font-family:'DM Serif Display',serif;font-size:1.5rem;color:var(--clr-white)">
+          ${formatPeso(p.amount)}
+        </div>
+      </div>
+
+      ${drawerRow('Status',        statusBadge(p.status))}
+      ${drawerRow('Payment date',  esc(p.date || '—'))}
+      ${drawerRow('Method',        esc(p.method || '—'))}
+      ${p.reference_no ? drawerRow('Reference no', esc(p.reference_no)) : ''}
+      ${p.billing_id   ? drawerRow('Billing ID',   esc(p.billing_id))   : ''}
+      ${p.note         ? drawerRow('Note',          esc(p.note))         : ''}
+      ${p.approved_by  ? drawerRow('Approved by',  esc(p.approved_by))  : ''}
+      ${p.approved_date? drawerRow('Approved date',esc(p.approved_date)): ''}
+      ${p.proof_url    ? `
+        <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+          <a href="${esc(p.proof_url)}" target="_blank" rel="noopener"
+             class="btn btn-ghost btn-sm" style="width:100%;text-align:center">
+            View proof of payment ↗
+          </a>
+        </div>` : ''}
+
+      ${p.status === 'approved' ? `
+        <button class="btn btn-secondary btn-sm" style="margin-top:var(--sp-sm)"
+          onclick="closeDrawer();viewReceipt('${esc(p.payment_id)}')">
+          🧾 View Receipt
+        </button>` : ''}
+      ${p.status === 'pending' ? `
+        <button class="btn btn-success btn-sm" style="margin-top:var(--sp-sm)"
+          onclick="closeDrawer();openApproveModal('${esc(p.payment_id)}')">
+          Review &amp; Approve
+        </button>` : ''}
+    </div>
+  `;
+
+  const backdrop = document.getElementById('drawer-backdrop');
+  const drawer   = document.getElementById('payment-drawer');
+  backdrop.style.display = 'block';
+  drawer.style.display   = 'block';
+  requestAnimationFrame(() => {
+    backdrop.style.opacity = '1';
+    drawer.style.transform = 'translateY(0)';
+  });
+}
+
+function drawerRow(label, valueHTML) {
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;
+                padding:10px 0;border-bottom:1px solid var(--border);font-size:.875rem">
+      <span style="color:var(--txt-muted)">${label}</span>
+      <span style="font-weight:500">${valueHTML}</span>
+    </div>`;
+}
+
+function closeDrawer() {
+  const backdrop = document.getElementById('drawer-backdrop');
+  const drawer   = document.getElementById('payment-drawer');
+  drawer.style.transform  = 'translateY(100%)';
+  backdrop.style.opacity  = '0';
+  setTimeout(() => {
+    drawer.style.display   = 'none';
+    backdrop.style.display = 'none';
+  }, 260);
+}
+
+// ---------------------------------------------------------------------------
+// ALL TRANSACTIONS TAB
+// ---------------------------------------------------------------------------
+async function loadTransactionsTab(bustCache = false) {
+  const wrap = document.getElementById('txn-table-wrap');
+  wrap.innerHTML = '<div class="skeleton-line" style="margin:16px"></div><div class="skeleton-line" style="margin:16px;width:80%"></div>';
+
+  try {
+    const raw = await apiGetAllPayments(_pin, bustCache);
+    // Enrich with tenant_code if missing (dashboard recent_payments may not have it)
+    _allTransactions = raw;
+    _txnFiltered     = raw;
+    filterTransactions();
+    _loaded.transactions = true;
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty-state" style="padding:16px"><p class="empty-state__msg">${esc(e.message)}</p></div>`;
+  }
+}
+
+function filterTransactions() {
+  const name   = (document.getElementById('txn-filter-name')?.value  || '').toLowerCase();
+  const from   = document.getElementById('txn-filter-from')?.value   || '';
+  const to     = document.getElementById('txn-filter-to')?.value     || '';
+  const method = document.getElementById('txn-filter-method')?.value || '';
+  const status = document.getElementById('txn-filter-status')?.value || '';
+  const min    = parseFloat(document.getElementById('txn-filter-min')?.value) || 0;
+  const max    = parseFloat(document.getElementById('txn-filter-max')?.value) || Infinity;
+
+  _txnFiltered = _allTransactions.filter(p => {
+    const nameMatch   = !name   || (p.tenant_name || '').toLowerCase().includes(name)
+                                || (p.tenant_code || '').toLowerCase().includes(name)
+                                || (p.unit        || '').toLowerCase().includes(name);
+    const fromMatch   = !from   || String(p.date) >= from;
+    const toMatch     = !to     || String(p.date) <= to;
+    const methodMatch = !method || p.method  === method;
+    const statusMatch = !status || p.status  === status;
+    const amount      = parseFloat(p.amount) || 0;
+    const minMatch    = amount >= min;
+    const maxMatch    = max === Infinity || amount <= max;
+    return nameMatch && fromMatch && toMatch && methodMatch && statusMatch && minMatch && maxMatch;
+  });
+
+  renderTransactionsTable(_txnFiltered);
+}
+
+function clearTransactionFilters() {
+  ['txn-filter-name','txn-filter-from','txn-filter-to',
+   'txn-filter-method','txn-filter-status','txn-filter-min','txn-filter-max'
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  _txnFiltered = _allTransactions;
+  renderTransactionsTable(_txnFiltered);
+}
+
+function renderTransactionsTable(rows) {
+  const wrap    = document.getElementById('txn-table-wrap');
+  const countEl = document.getElementById('txn-result-count');
+  if (countEl) countEl.textContent = `${rows.length} transaction${rows.length !== 1 ? 's' : ''}`;
+
+  if (!rows.length) {
+    wrap.innerHTML = `<div class="empty-state" style="padding:24px">
+      <p class="empty-state__msg">No transactions match your filters.</p>
+    </div>`;
+    return;
+  }
+
+  wrap.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Tenant</th>
+          <th>Amount</th>
+          <th>Method</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(p => `
+          <tr style="cursor:pointer" onclick='openPaymentDrawer(${JSON.stringify(p)})'>
+            <td class="text-muted text-sm">${esc(p.date)}</td>
+            <td>
+              <div class="fw-semi" style="font-size:.875rem">${esc(p.tenant_name || '—')}</div>
+              <div class="text-muted text-sm">${esc(p.unit || '')}</div>
+            </td>
+            <td class="amount">${formatPeso(p.amount)}</td>
+            <td class="text-sm">${esc(p.method || '—')}</td>
+            <td>${statusBadge(p.status)}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function exportTransactionsCSV() {
+  if (!_txnFiltered.length) {
+    showToast('No transactions to export.', 'error');
+    return;
+  }
+
+  const headers = ['Date','Tenant','Unit','Tenant Code','Amount','Method',
+                   'Reference No','Status','Note','Approved By','Approved Date','Billing ID','Payment ID'];
+  const rows = _txnFiltered.map(p => [
+    p.date, p.tenant_name, p.unit, p.tenant_code,
+    p.amount, p.method, p.reference_no, p.status,
+    p.note, p.approved_by, p.approved_date, p.billing_id, p.payment_id
+  ].map(v => `"${String(v ?? '').replace(/"/g, '""')}"`));
+
+  const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `jj-transactions-${getTodayDate()}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ---------------------------------------------------------------------------
 // LEDGER TAB
 // ---------------------------------------------------------------------------
 async function loadLedger(bustCache = false) {
@@ -885,6 +1161,7 @@ async function loadLedger(bustCache = false) {
     _ledgerData = await apiGetLedger(_pin, bustCache);
     renderLedgerSummary(_ledgerData.summary);
     renderLedger();
+    _loaded.ledger = true;
   } catch (e) {
     listEl.innerHTML = `<div class="empty-state"><p class="empty-state__msg">${esc(e.message)}</p></div>`;
   }
@@ -972,8 +1249,12 @@ function toggleLedgerRow(tenantId) {
 }
 
 // ---------------------------------------------------------------------------
-// LOG PAYMENT MODAL
+// LOG PAYMENT MODAL (Flexible — multi-period + credit)
 // ---------------------------------------------------------------------------
+
+// Module-level store for the unpaid billing rows of the currently selected tenant
+let _lpBillingRows = [];
+
 async function populateLogPaymentTenants() {
   if (_tenants.length === 0) {
     try { _tenants = await apiGetAllTenants(_pin); } catch (_) {}
@@ -983,62 +1264,162 @@ async function populateLogPaymentTenants() {
     _tenants.filter(t => t.status === 'active').map(t =>
       `<option value="${esc(t.tenant_id)}">${esc(t.name)} (${esc(t.unit)})</option>`
     ).join('');
+
+  // Reset periods panel
+  _lpBillingRows = [];
+  document.getElementById('lp-periods-group').style.display = 'none';
+  document.getElementById('lp-periods-list').innerHTML = '';
+  document.getElementById('lp-credit-warning').style.display = 'none';
 }
 
 async function onLogPaymentTenantChange() {
-  const tenantId = document.getElementById('lp-tenant').value;
-  const bilSel   = document.getElementById('lp-billing');
-  bilSel.innerHTML = '<option value="">Loading…</option>';
+  const tenantId    = document.getElementById('lp-tenant').value;
+  const periodsGrp  = document.getElementById('lp-periods-group');
+  const periodsList = document.getElementById('lp-periods-list');
+
+  _lpBillingRows = [];
+  document.getElementById('lp-credit-warning').style.display = 'none';
 
   if (!tenantId) {
-    bilSel.innerHTML = '<option value="">— select tenant first —</option>';
+    periodsGrp.style.display = 'none';
+    periodsList.innerHTML = '';
     return;
   }
 
+  periodsList.innerHTML = '<div style="padding:12px;color:var(--txt-muted);font-size:.85rem">Loading…</div>';
+  periodsGrp.style.display = 'block';
+
   try {
     const bills = await apiGetBillingHistory({ admin_pin: _pin, tenant_id: tenantId });
-    if (!bills.length) {
-      bilSel.innerHTML = '<option value="">No billing records found</option>';
+    _lpBillingRows = bills
+      .filter(b => b.status === 'unpaid' || b.status === 'partial')
+      .sort((a, b) => a.month < b.month ? -1 : 1);
+
+    if (!_lpBillingRows.length) {
+      periodsList.innerHTML = `
+        <div style="padding:12px;color:var(--txt-muted);font-size:.85rem">
+          ✓ No outstanding balance for this tenant.
+        </div>`;
       return;
     }
-    bilSel.innerHTML = bills.map(b =>
-      `<option value="${esc(b.billing_id)}">${esc(formatMonth(b.month))} — Balance: ${formatPeso(b.balance)} (${esc(b.status)})</option>`
-    ).join('');
+
+    periodsList.innerHTML = _lpBillingRows.map((b, i) => `
+      <label style="
+        display:flex;align-items:center;gap:12px;
+        padding:10px 14px;
+        border-bottom:${i < _lpBillingRows.length - 1 ? '1px solid var(--border)' : 'none'};
+        cursor:pointer;font-size:.875rem;
+      ">
+        <input type="checkbox" class="lp-period-check" value="${esc(b.billing_id)}"
+          data-balance="${parseFloat(b.balance) || 0}"
+          style="width:16px;height:16px;flex-shrink:0" />
+        <span style="flex:1">${esc(formatMonth(b.month))}</span>
+        <span style="color:var(--clr-red);font-weight:600">${formatPeso(b.balance)}</span>
+        <span class="badge badge-${b.status === 'partial' ? 'partial' : 'unpaid'}">${esc(b.status)}</span>
+      </label>
+    `).join('');
+
+    periodsList.querySelectorAll('.lp-period-check').forEach(cb => {
+      cb.addEventListener('change', onLogPaymentAmountChange);
+      cb.checked = true;
+    });
+
+    const total = _lpBillingRows.reduce((s, b) => s + (parseFloat(b.balance) || 0), 0);
+    document.getElementById('lp-amount').value = total.toFixed(2);
+    onLogPaymentAmountChange();
+
   } catch (e) {
-    bilSel.innerHTML = `<option value="">${esc(e.message)}</option>`;
+    periodsList.innerHTML = `<div style="padding:12px;color:var(--clr-red);font-size:.85rem">${esc(e.message)}</div>`;
+  }
+}
+
+function onLogPaymentAmountChange() {
+  const amount   = parseFloat(document.getElementById('lp-amount').value) || 0;
+  const warning  = document.getElementById('lp-credit-warning');
+  const creditEl = document.getElementById('lp-credit-amount');
+  const confirm  = document.getElementById('lp-credit-confirm');
+
+  const checkedTotal = Array.from(
+    document.querySelectorAll('.lp-period-check:checked')
+  ).reduce((s, cb) => s + (parseFloat(cb.dataset.balance) || 0), 0);
+
+  const excess = amount - checkedTotal;
+
+  if (excess > 0.005 && checkedTotal > 0) {
+    creditEl.textContent = formatPeso(excess);
+    warning.style.display = 'block';
+    confirm.checked = false;
+  } else {
+    warning.style.display = 'none';
   }
 }
 
 async function submitLogPayment() {
-  const btn = document.getElementById('btn-submit-log-payment');
-  const payload = {
-    tenant_id:    document.getElementById('lp-tenant').value,
-    billing_id:   document.getElementById('lp-billing').value,
-    amount:       document.getElementById('lp-amount').value,
-    date:         document.getElementById('lp-date').value,
-    method:       document.getElementById('lp-method').value,
-    reference_no: document.getElementById('lp-ref').value.trim(),
-    note:         document.getElementById('lp-note').value.trim(),
-  };
+  const btn      = document.getElementById('btn-submit-log-payment');
+  const tenantId = document.getElementById('lp-tenant').value;
+  const amount   = parseFloat(document.getElementById('lp-amount').value) || 0;
+  const date     = document.getElementById('lp-date').value;
+  const method   = document.getElementById('lp-method').value;
+  const ref      = document.getElementById('lp-ref').value.trim();
+  const note     = document.getElementById('lp-note').value.trim();
 
-  if (!payload.tenant_id || !payload.amount || !payload.method || !payload.date) {
-    showToast('Tenant, amount, method, and date are required.', 'error');
+  const selectedPeriods = Array.from(
+    document.querySelectorAll('.lp-period-check:checked')
+  ).map(cb => cb.value);
+
+  if (!tenantId || !amount || !date || !method) {
+    showToast('Tenant, amount, date, and method are required.', 'error');
     return;
+  }
+  if (!selectedPeriods.length) {
+    showToast('Select at least one billing period.', 'error');
+    return;
+  }
+
+  const warning = document.getElementById('lp-credit-warning');
+  if (warning.style.display !== 'none') {
+    if (!document.getElementById('lp-credit-confirm').checked) {
+      showToast('Please confirm the advance credit before submitting.', 'error');
+      return;
+    }
   }
 
   setBtnLoading(btn, true, 'Saving…');
   try {
-    const result = await apiLogPayment(_pin, payload);
-    showToast('Payment logged. Receipt emailed to tenant.', 'success');
+    const result = await apiLogFlexiblePayment(_pin, {
+      tenant_id:        tenantId,
+      amount,
+      date,
+      method,
+      reference_no:     ref,
+      note,
+      selected_periods: selectedPeriods
+    });
+
+    if (result.emailSent === false) {
+      showToast('Payment logged. ⚠️ Receipt email could not be sent — check tenant email on file.', 'warning');
+    } else {
+      showToast('Payment logged. Receipt emailed to tenant.', 'success');
+    }
+
+    if (result.credit_written > 0) {
+      showToast(`${formatPeso(result.credit_written)} recorded as advance credit.`, 'info', 5000);
+    }
+
     closeModal('modal-log-payment');
-    // Show receipt
-    if (result && result.receipt) {
+
+    if (result.receipts && result.receipts.length > 0) {
       const body = document.getElementById('receipt-view-body');
-      body.innerHTML = buildReceiptHTML(result.receipt);
+      body.innerHTML = buildReceiptHTML(result.receipts[result.receipts.length - 1]);
       openModal('modal-receipt');
     }
+
+    _loaded.dashboard    = false;
+    _loaded.ledger       = false;
+    _loaded.transactions = false;
     await loadPaymentsTab(true);
     if (_activeTab === 'dashboard') await loadDashboard(true);
+
   } catch (e) {
     showToast(e.message, 'error');
   } finally {
@@ -1063,5 +1444,40 @@ function handleQuickAction(action) {
     case 'meter-readings':
       switchTab('billing');
       break;
+    case 'send-reminders':
+      sendRemindersNow();
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SEND REMINDERS
+// ---------------------------------------------------------------------------
+async function sendRemindersNow() {
+  const btn = document.getElementById('btn-send-reminders');
+  if (btn) {
+    btn.disabled = true;
+    btn.querySelector('.quick-btn__icon').textContent = '⏳';
+  }
+
+  try {
+    const result = await apiPost({ action: 'triggerRemindersNow', admin_pin: _pin });
+
+    if (result.disabled) {
+      showToast('Reminders are disabled. Set reminder_enabled = true in your Config sheet to enable.', 'info', 6000);
+    } else {
+      showToast(
+        `Reminders sent: ${result.sent} | Skipped: ${result.skipped} | Failed: ${result.failed}`,
+        result.failed > 0 ? 'warning' : 'success',
+        6000
+      );
+    }
+  } catch (e) {
+    showToast('Failed to send reminders: ' + e.message, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.querySelector('.quick-btn__icon').textContent = '🔔';
+    }
   }
 }
