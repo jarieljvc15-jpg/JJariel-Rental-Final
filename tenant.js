@@ -13,6 +13,13 @@ let _billingRows = [];    // full billing history
 let _payments    = [];    // full payment history
 let _activeTab   = 'home';
 
+// Tracks which tabs have data already loaded this session.
+const _loaded = {
+  home:    false,
+  billing: false,
+  history: false,
+};
+
 // ---------------------------------------------------------------------------
 // BOOT
 // ---------------------------------------------------------------------------
@@ -102,6 +109,7 @@ function logout() {
   _billingRows = [];
   _payments    = [];
   _cacheClear();
+  Object.keys(_loaded).forEach(k => _loaded[k] = false);
   document.getElementById('app-shell').classList.add('hidden');
   document.getElementById('login-screen').classList.remove('hidden');
   document.getElementById('code-input').value = '';
@@ -126,10 +134,17 @@ function switchTab(tabName) {
   if (!_loginCode) return;
 
   switch (tabName) {
-    case 'home':    return loadHome();
-    case 'billing': return loadBillingTab();
-    case 'pay':     return loadPayTab();
-    case 'history': return loadHistoryTab();
+    case 'home':
+      if (!_loaded.home) return loadHome();
+      break;
+    case 'billing':
+      if (!_loaded.billing) return loadBillingTab();
+      break;
+    case 'pay':
+      return loadPayTab(); // always refresh — shows unpaid balance
+    case 'history':
+      if (!_loaded.history) return loadHistoryTab();
+      break;
   }
 }
 
@@ -138,9 +153,9 @@ function switchTab(tabName) {
 // ---------------------------------------------------------------------------
 async function loadHome() {
   try {
-    // Refresh tenant info + current billing
     _tenantInfo = await apiGetTenantInfo(_loginCode);
     renderHome(_tenantInfo);
+    _loaded.home = true;
   } catch (e) {
     document.getElementById('home-billing-card').innerHTML =
       `<div class="empty-state"><p class="empty-state__msg">${esc(e.message)}</p></div>`;
@@ -175,11 +190,17 @@ function renderHome(info) {
     : 'No payments recorded yet';
 
   // Tenant info chips
+  const credit = parseFloat(info.credit) || 0;
   document.getElementById('tenant-chips').innerHTML = [
-    tenant.name       ? `<span class="tenant-chip"><strong>${esc(tenant.name)}</strong></span>` : '',
-    tenant.unit       ? `<span class="tenant-chip">Unit: <strong>${esc(tenant.unit)}</strong></span>` : '',
-    tenant.login_code ? `<span class="tenant-chip">Code: <strong>${esc(tenant.login_code)}</strong></span>` : '',
+    tenant.name        ? `<span class="tenant-chip"><strong>${esc(tenant.name)}</strong></span>` : '',
+    tenant.unit        ? `<span class="tenant-chip">Unit: <strong>${esc(tenant.unit)}</strong></span>` : '',
+    tenant.login_code  ? `<span class="tenant-chip">Code: <strong>${esc(tenant.login_code)}</strong></span>` : '',
     tenant.monthly_rent ? `<span class="tenant-chip">Rent: <strong>${formatPeso(tenant.monthly_rent)}/mo</strong></span>` : '',
+    credit > 0
+      ? `<span class="tenant-chip" style="background:var(--accent-pale);border-color:var(--accent-light);color:var(--clr-teal-dark)">
+           💚 Credit: <strong>${formatPeso(credit)}</strong>
+         </span>`
+      : '',
   ].join('');
 
   // Current month billing card
@@ -283,6 +304,7 @@ async function loadBillingTab() {
   try {
     _billingRows = await apiGetBillingHistory({ login_code: _loginCode });
     renderBillingTab();
+    _loaded.billing = true;
   } catch (e) {
     el.innerHTML = `<div class="empty-state"><p class="empty-state__msg">${esc(e.message)}</p></div>`;
   }
@@ -385,9 +407,12 @@ async function submitPayment() {
     document.getElementById('pay-method').value  = '';
     document.getElementById('pay-date').value    = getTodayDate();
 
-    // Bust billing cache so history tab refreshes
+    // Bust loaded flags so next tab visit fetches fresh data
     _billingRows = [];
     _payments    = [];
+    _loaded.home    = false;
+    _loaded.billing = false;
+    _loaded.history = false;
 
     // Switch to history so tenant can see their pending submission
     switchTab('history');
@@ -410,6 +435,7 @@ async function loadHistoryTab() {
   try {
     _payments = await apiGetPaymentHistory({ login_code: _loginCode });
     renderHistoryTab();
+    _loaded.history = true;
   } catch (e) {
     el.innerHTML = `<div class="empty-state"><p class="empty-state__msg">${esc(e.message)}</p></div>`;
   }
