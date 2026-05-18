@@ -12,14 +12,14 @@ let _tenants    = [];
 let _ledgerData = null;
 let _pendingPayments  = [];
 let _allPayments      = [];
-let _allTransactions  = [];   // full payment log for Transactions tab
-let _recentPayments   = [];   // copy of last dashboard recent payments for client filter
-let _txnFiltered      = [];   // currently filtered transactions
+let _allTransactions  = [];
+let _recentPayments   = [];
+let _txnFiltered      = [];
 let _activeTab  = 'dashboard';
 let _ledgerFilter = 'all';
-let _currentReceiptPaymentId = null; // tracks which payment the open receipt belongs to
-let _chartMode = 'daily';            // 'daily' | 'weekly' | 'monthly'
-let _chartData = null;               // last fetched collection stats
+let _currentReceiptPaymentId = null;
+let _chartMode = 'daily';
+let _chartData = null;
 
 const _loaded = {
   dashboard:    false,
@@ -37,18 +37,15 @@ const _loaded = {
     _cfg = await apiGetConfig();
     applyPropertyName(_cfg.property_name || 'Property', 'Admin Portal');
   } catch (e) {
-    // If config fails, still show login so admin can try again
     applyPropertyName('Property', 'Admin Portal');
   }
 
-  // Wire up login
   const pinInput = document.getElementById('pin-input');
   const loginBtn = document.getElementById('login-btn');
 
   loginBtn.addEventListener('click', attemptLogin);
   pinInput.addEventListener('keydown', e => { if (e.key === 'Enter') attemptLogin(); });
 
-  // Wire up global nav & controls
   document.querySelectorAll('.nav-tab').forEach(tab => {
     tab.addEventListener('click', () => switchTab(tab.dataset.tab));
   });
@@ -56,12 +53,10 @@ const _loaded = {
   document.getElementById('logout-btn').addEventListener('click', logout);
   document.getElementById('refresh-btn').addEventListener('click', () => loadActiveTab(true));
 
-  // Quick-action buttons (dashboard)
   document.querySelectorAll('[data-action]').forEach(btn => {
     btn.addEventListener('click', () => handleQuickAction(btn.dataset.action));
   });
 
-  // Ledger filter pills
   document.querySelectorAll('[data-ledger-filter]').forEach(pill => {
     pill.addEventListener('click', () => {
       _ledgerFilter = pill.dataset.ledgerFilter;
@@ -73,36 +68,28 @@ const _loaded = {
 
   document.getElementById('btn-refresh-ledger').addEventListener('click', () => loadLedger(true));
 
-  // Billing tab
   document.getElementById('billing-month').value = getCurrentMonth();
   document.getElementById('btn-load-readings').addEventListener('click', loadReadingsForm);
   document.getElementById('btn-save-readings').addEventListener('click', saveReadings);
 
-  // Tenant tab
   document.getElementById('btn-add-tenant').addEventListener('click', openAddTenant);
   document.getElementById('btn-submit-tenant').addEventListener('click', submitTenantForm);
 
-  // Log payment modal
   document.getElementById('btn-submit-log-payment').addEventListener('click', submitLogPayment);
   document.getElementById('lp-tenant').addEventListener('change', onLogPaymentTenantChange);
   document.getElementById('lp-amount').addEventListener('input', onLogPaymentAmountChange);
 
-  // Move-out date reveal
   document.getElementById('tf-status').addEventListener('change', function () {
     document.getElementById('tf-moveout-row').classList.toggle('hidden', this.value !== 'moved-out');
   });
 
-  // Approve/reject modal buttons
   document.getElementById('btn-approve').addEventListener('click', () => submitApproval('approve'));
   document.getElementById('btn-reject').addEventListener('click', () => submitApproval('reject'));
 
-  // History filter
   document.getElementById('history-tenant-filter').addEventListener('change', renderPaymentHistory);
 
-  // Transactions tab
   document.getElementById('btn-export-csv').addEventListener('click', exportTransactionsCSV);
 
-  // Payments tab – add tenant
   document.getElementById('btn-add-tenant').addEventListener('click', openAddTenant);
 })();
 
@@ -121,7 +108,6 @@ async function attemptLogin() {
   loginErr.classList.add('hidden');
 
   try {
-    // Fetch fresh config in case it was unavailable at boot
     if (!_cfg.admin_pin) _cfg = await apiGetConfig(true);
 
     if (entered === String(_cfg.admin_pin)) {
@@ -208,7 +194,6 @@ async function loadDashboard(bustCache = false) {
     const data = await apiGetDashboard(_pin, null, bustCache);
     renderDashboard(data);
     _loaded.dashboard = true;
-    // Load chart data (non-blocking — don't await so dashboard renders first)
     loadCollectionStats(_chartMode, bustCache);
   } catch (e) {
     document.getElementById('dash-stats').innerHTML =
@@ -219,7 +204,6 @@ async function loadDashboard(bustCache = false) {
 function renderDashboard(data) {
   document.getElementById('dash-month').textContent = formatMonth(data.month);
 
-  // Stat cards
   document.getElementById('dash-stats').innerHTML = `
     <div class="stat-card">
       <div class="stat-card__icon">💰</div>
@@ -250,7 +234,6 @@ function renderDashboard(data) {
     </div>
   `;
 
-  // Recent activity feed
   _recentPayments = data.recent_payments || [];
   filterRecentPayments();
 }
@@ -369,7 +352,6 @@ function openAddTenant() {
   document.getElementById('btn-submit-tenant').textContent  = 'Add tenant';
   document.getElementById('tenant-form-id').value           = '';
 
-  // Clear form
   ['tf-name','tf-unit','tf-room-type','tf-move-in','tf-rent',
    'tf-deposit','tf-email','tf-contact','tf-login-code'].forEach(id => {
     document.getElementById(id).value = '';
@@ -442,7 +424,6 @@ async function submitTenantForm() {
     _loaded.tenants   = false;
     _loaded.dashboard = false;
     await loadTenants(true);
-    // Refresh tenant dropdown in Log Payment modal
     populateLogPaymentTenants();
   } catch (e) {
     showToast(e.message, 'error');
@@ -453,7 +434,6 @@ async function submitTenantForm() {
 }
 
 function viewTenantPayments(tenantId) {
-  // Switch to Payments tab and pre-filter by this tenant
   switchTab('payments');
   const filter = document.getElementById('history-tenant-filter');
   filter.value = tenantId;
@@ -483,11 +463,8 @@ async function loadReadingsForm() {
       return;
     }
 
-    // Fetch existing billing for this month to prefill current values
     let existingBilling = [];
     try {
-      // We fetch each tenant's billing; for large sets a dedicated endpoint would be better,
-      // but for ~20 tenants a single getLedger call covers it
       if (!_ledgerData) {
         _ledgerData = await apiGetLedger(_pin);
       }
@@ -514,11 +491,8 @@ async function loadReadingsForm() {
             </div>
           </div>
 
-          <!-- Electric -->
           <div class="meter-block">
-            <div class="meter-block__header">
-              <span>⚡ Electric</span>
-            </div>
+            <div class="meter-block__header"><span>⚡ Electric</span></div>
             <div class="meter-row meter-row--prev">
               <span class="icon-lock">🔒 Previous reading</span>
               <span><strong>${esc(String(elecPrev))}</strong> kWh</span>
@@ -538,11 +512,8 @@ async function loadReadingsForm() {
             </div>
           </div>
 
-          <!-- Water -->
           <div class="meter-block">
-            <div class="meter-block__header">
-              <span>💧 Water</span>
-            </div>
+            <div class="meter-block__header"><span>💧 Water</span></div>
             <div class="meter-row meter-row--prev">
               <span class="icon-lock">🔒 Previous reading</span>
               <span><strong>${esc(String(waterPrev))}</strong> m³</span>
@@ -562,27 +533,18 @@ async function loadReadingsForm() {
             </div>
           </div>
 
-          <!-- Live computed bill preview -->
           <div class="meter-result" id="bill-preview-${esc(t.tenant_id)}">
             <div class="meter-result__line"><span>Rent</span><span>${formatPeso(t.monthly_rent)}</span></div>
-            <div class="meter-result__line" id="elec-bill-line-${esc(t.tenant_id)}">
-              <span>Electric bill</span><span>—</span>
-            </div>
-            <div class="meter-result__line" id="water-bill-line-${esc(t.tenant_id)}">
-              <span>Water bill</span><span>—</span>
-            </div>
-            <div class="meter-result__total" id="total-bill-line-${esc(t.tenant_id)}">
-              <span>Total</span><span>${formatPeso(t.monthly_rent)}</span>
-            </div>
+            <div class="meter-result__line" id="elec-bill-line-${esc(t.tenant_id)}"><span>Electric bill</span><span>—</span></div>
+            <div class="meter-result__line" id="water-bill-line-${esc(t.tenant_id)}"><span>Water bill</span><span>—</span></div>
+            <div class="meter-result__total" id="total-bill-line-${esc(t.tenant_id)}"><span>Total</span><span>${formatPeso(t.monthly_rent)}</span></div>
           </div>
         </div>
       `;
     }).join('');
 
-    // Wire up live computation
     el.querySelectorAll('.reading-input').forEach(input => {
       input.addEventListener('input', () => recomputeBillPreview(input.closest('[data-tenant-id]')));
-      // Trigger for pre-filled values
       if (input.value) recomputeBillPreview(input.closest('[data-tenant-id]'));
     });
 
@@ -656,7 +618,7 @@ async function saveReadings() {
   try {
     const result = await apiEnterMeterReadings(_pin, month, readings);
     showToast(`Saved ${result.results.length} billing records for ${formatMonth(month)}.`, 'success');
-    _ledgerData = null; // bust ledger cache
+    _ledgerData = null;
     document.getElementById('readings-footer').classList.add('hidden');
   } catch (e) {
     showToast(e.message, 'error');
@@ -723,10 +685,14 @@ async function loadPendingPayments(bustCache = false) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// FIX: loadPaymentHistory — replaced 30-call per-tenant fetch with one
+// getAllPayments call, filtered client-side. Receipt buttons now work
+// because getAllPayments joins receipt_no from the Receipts sheet.
+// ---------------------------------------------------------------------------
 async function loadPaymentHistory(bustCache = false) {
   const wrap = document.getElementById('history-table-wrap');
 
-  // Ensure tenants loaded for filter dropdown
   if (_tenants.length === 0) {
     try { _tenants = await apiGetAllTenants(_pin); } catch (_) {}
   }
@@ -735,32 +701,33 @@ async function loadPaymentHistory(bustCache = false) {
   const filter = document.getElementById('history-tenant-filter');
   const curVal = filter.value;
   filter.innerHTML = '<option value="">All tenants</option>' +
-    _tenants.map(t => `<option value="${esc(t.tenant_id)}" ${curVal === String(t.tenant_id) ? 'selected' : ''}>${esc(t.name)} (${esc(t.unit)})</option>`).join('');
+    _tenants.map(t =>
+      `<option value="${esc(t.tenant_id)}" ${curVal === String(t.tenant_id) ? 'selected' : ''}>
+        ${esc(t.name)} (${esc(t.unit)})
+      </option>`
+    ).join('');
 
   wrap.innerHTML = '<div class="skeleton-line" style="margin:16px"></div>';
 
   try {
-    // Collect payments for all tenants or selected tenant
-    const selectedId = filter.value;
-    if (selectedId) {
-      _allPayments = await apiGetPaymentHistory({ admin_pin: _pin, tenant_id: selectedId }, bustCache);
-    } else {
-      // Fetch for all tenants (parallel, capped at active list)
-      const all = await Promise.all(
-        _tenants.slice(0, 30).map(t =>
-          apiGetPaymentHistory({ admin_pin: _pin, tenant_id: t.tenant_id }, bustCache)
-            .then(rows => rows.map(r => ({ ...r,
-              tenant_name: t.name, unit: t.unit
-            })))
-            .catch(() => [])
-        )
-      );
-      _allPayments = all.flat().sort((a,b) => a.date < b.date ? 1 : -1);
-    }
+    // One GAS call instead of up to 30
+    const raw = await apiGetAllPayments(_pin, bustCache);
+
+    _allPayments = raw.map(p => {
+      const t = _tenants.find(t => String(t.tenant_id) === String(p.tenant_id));
+      return {
+        ...p,
+        tenant_name: t ? t.name : (p.tenant_name || 'Unknown'),
+        unit:        t ? t.unit : (p.unit || ''),
+      };
+    });
 
     renderPaymentHistory();
   } catch (e) {
-    wrap.innerHTML = `<div class="empty-state" style="padding:16px"><p class="empty-state__msg">${esc(e.message)}</p></div>`;
+    wrap.innerHTML =
+      `<div class="empty-state" style="padding:16px">
+        <p class="empty-state__msg">${esc(e.message)}</p>
+       </div>`;
   }
 }
 
@@ -817,7 +784,6 @@ function renderPaymentHistory() {
   `;
 }
 
-// Open approve modal
 function openApproveModal(paymentId) {
   const p    = _pendingPayments.find(x => x.payment_id === paymentId)
             || _allPayments.find(x => x.payment_id === paymentId);
@@ -860,12 +826,12 @@ function openApproveModal(paymentId) {
 }
 
 function openRejectModal(paymentId) {
-  openApproveModal(paymentId); // same modal, both actions available
+  openApproveModal(paymentId);
 }
 
 async function submitApproval(action) {
-  const paymentId = document.getElementById('approve-payment-id').value;
-  const note      = document.getElementById('approve-note').value.trim();
+  const paymentId  = document.getElementById('approve-payment-id').value;
+  const note       = document.getElementById('approve-note').value.trim();
   const approveBtn = document.getElementById('btn-approve');
   const rejectBtn  = document.getElementById('btn-reject');
 
@@ -874,8 +840,12 @@ async function submitApproval(action) {
 
   try {
     if (action === 'approve') {
-      await apiApprovePayment(_pin, paymentId, note);
-      showToast('Payment approved. Receipt sent to tenant.', 'success');
+      const result = await apiApprovePayment(_pin, paymentId, note);
+      if (result.emailSent === false) {
+        showToast('Payment approved. ⚠️ Receipt email could not be sent — check tenant email on file.', 'warning');
+      } else {
+        showToast('Payment approved. Receipt sent to tenant.', 'success');
+      }
     } else {
       await apiRejectPayment(_pin, paymentId, note);
       showToast('Payment rejected.', 'info');
@@ -1045,7 +1015,6 @@ async function loadTransactionsTab(bustCache = false) {
 
   try {
     const raw = await apiGetAllPayments(_pin, bustCache);
-    // Enrich with tenant_code if missing (dashboard recent_payments may not have it)
     _allTransactions = raw;
     _txnFiltered     = raw;
     filterTransactions();
@@ -1188,8 +1157,7 @@ async function resendReceiptEmail() {
 // ---------------------------------------------------------------------------
 async function loadCollectionStats(mode, bustCache = false) {
   _chartMode = mode || _chartMode;
-  const wrap     = document.getElementById('chart-table');
-  const canvas   = document.getElementById('collection-chart');
+  const wrap   = document.getElementById('chart-table');
   if (wrap) wrap.innerHTML = '<div class="skeleton-line" style="margin:12px"></div>';
 
   try {
@@ -1234,7 +1202,6 @@ function renderChart(periods) {
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, W, H);
 
-  // Grid lines
   ctx.strokeStyle = '#e5e5e5';
   ctx.lineWidth   = 1;
   [0.25, 0.5, 0.75, 1].forEach(pct => {
@@ -1246,21 +1213,17 @@ function renderChart(periods) {
     ctx.fillText(formatPeso(maxVal * pct).replace('₱','₱'), padL - 4, y + 3);
   });
 
-  // Bars
   periods.forEach((p, i) => {
     const x      = padL + i * gap + Math.floor(gap / 2) - barW;
     const bilH   = Math.round((p.billed    / maxVal) * chartH);
     const colH   = Math.round((p.collected / maxVal) * chartH);
 
-    // Billed bar (light blue)
     ctx.fillStyle = '#c0d8f0';
     ctx.fillRect(x, padT + chartH - bilH, barW, bilH);
 
-    // Collected bar (teal)
     ctx.fillStyle = '#1aab85';
     ctx.fillRect(x + barW + 2, padT + chartH - colH, barW, colH);
 
-    // Label
     ctx.fillStyle   = '#888';
     ctx.font        = '9px sans-serif';
     ctx.textAlign   = 'center';
@@ -1374,13 +1337,9 @@ function renderLedger() {
       const balClass2 = unpaid ? 'ledger-month__balance--owing' : 'ledger-month__balance--zero';
       return `
         <div class="ledger-month ${unpaid ? 'unpaid' : ''}">
-          <div class="ledger-month__label">
-            ${esc(m.month_label)} ${statusBadge(m.status)}
-          </div>
+          <div class="ledger-month__label">${esc(m.month_label)} ${statusBadge(m.status)}</div>
           <div class="ledger-month__billed">Billed: ${formatPeso(m.total_bill)}</div>
-          <div class="ledger-month__balance ${balClass2}">
-            ${unpaid ? formatPeso(bal) : '✓ Paid'}
-          </div>
+          <div class="ledger-month__balance ${balClass2}">${unpaid ? formatPeso(bal) : '✓ Paid'}</div>
         </div>
       `;
     }).join('');
@@ -1415,8 +1374,6 @@ function toggleLedgerRow(tenantId) {
 // ---------------------------------------------------------------------------
 // LOG PAYMENT MODAL (Flexible — multi-period + credit)
 // ---------------------------------------------------------------------------
-
-// Module-level store for the unpaid billing rows of the currently selected tenant
 let _lpBillingRows = [];
 
 async function populateLogPaymentTenants() {
@@ -1429,7 +1386,6 @@ async function populateLogPaymentTenants() {
       `<option value="${esc(t.tenant_id)}">${esc(t.name)} (${esc(t.unit)})</option>`
     ).join('');
 
-  // Reset periods panel
   _lpBillingRows = [];
   document.getElementById('lp-periods-group').style.display = 'none';
   document.getElementById('lp-periods-list').innerHTML = '';
@@ -1593,7 +1549,7 @@ async function submitLogPayment() {
 }
 
 // ---------------------------------------------------------------------------
-// QUICK ACTIONS (dashboard shortcuts)
+// QUICK ACTIONS
 // ---------------------------------------------------------------------------
 function handleQuickAction(action) {
   switch (action) {
