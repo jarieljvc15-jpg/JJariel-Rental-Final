@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 // CONFIGURATION — paste your deployed Apps Script Web App URL here
 // ---------------------------------------------------------------------------
-const GAS_URL = 'YOUR_APPS_SCRIPT_WEB_APP_URL_HERE';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbwdpGB9qQHIWh5V5EPdcSHu1cBNdcMohxnV-vvuqCdzlUpGYkAse9vSthxgG3hsUvpz/exec';
 
 // ---------------------------------------------------------------------------
 // IN-MEMORY CACHE
