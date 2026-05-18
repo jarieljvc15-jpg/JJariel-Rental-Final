@@ -33,11 +33,19 @@ const _loaded = {
 // BOOT
 // ---------------------------------------------------------------------------
 (async function boot() {
+  const cachedCfg = apiGetCachedConfig();
+  if (cachedCfg) {
+    _cfg = cachedCfg;
+    applyPropertyName(_cfg.property_name || 'Property', 'Admin Portal');
+  } else {
+    applyPropertyName('Property', 'Admin Portal');
+  }
+
   try {
     _cfg = await apiGetConfig();
     applyPropertyName(_cfg.property_name || 'Property', 'Admin Portal');
   } catch (e) {
-    applyPropertyName('Property', 'Admin Portal');
+    // Keep cached/default branding; login will show a connection error if needed.
   }
 
   const pinInput = document.getElementById('pin-input');
@@ -138,7 +146,7 @@ function logout() {
   _allTransactions = [];
   _recentPayments  = [];
   _txnFiltered     = [];
-  _cacheClear();
+  apiClearDataCache();
   Object.keys(_loaded).forEach(k => _loaded[k] = false);
   document.getElementById('app-shell').classList.add('hidden');
   document.getElementById('login-screen').classList.remove('hidden');

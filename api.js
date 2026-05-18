@@ -10,16 +10,15 @@
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbwdpGB9qQHIWh5V5EPdcSHu1cBNdcMohxnV-vvuqCdzlUpGYkAse9vSthxgG3hsUvpz/exec';
 
 // ---------------------------------------------------------------------------
-// IN-MEMORY CACHE
-// Avoids redundant round-trips within a single page session.
-// Keys: 'config', 'tenants', 'ledger', 'dashboard', 'pending',
-//       'billing:<tenantId>', 'payments:<tenantId>'
-// Cache is intentionally NOT persisted to localStorage — a page refresh
-// always fetches fresh data from Sheets.
+// CLIENT-SIDE CACHE
+// Avoids redundant round-trips within a single page session. Config is also
+// persisted to localStorage so a page refresh can paint immediately without
+// waiting for Google Apps Script / Sheets. Operational data remains in-memory.
 // ---------------------------------------------------------------------------
 const _cache = {};
-const _CACHE_TTL_MS      = 60 * 1000;       // 60 s for most data
-const _CONFIG_CACHE_TTL  = 24 * 60 * 60 * 1000; // config: effectively the whole session
+const _CACHE_TTL_MS      = 60 * 1000;             // 60 s for most data
+const _CONFIG_CACHE_TTL  = 24 * 60 * 60 * 1000;  // config: 24 h across reloads
+const _CONFIG_STORAGE_KEY = 'jjrms:config:v1';
 
 function _cacheSet(key, value, ttl) {
   _cache[key] = { value, ts: Date.now(), ttl: ttl || _CACHE_TTL_MS };
@@ -35,12 +34,63 @@ function _cacheGet(key) {
   return entry.value;
 }
 
+function _storageGet(key, ttl) {
+  try {
+    if (!window.localStorage) return null;
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const entry = JSON.parse(raw);
+    if (!entry || Date.now() - entry.ts > ttl) {
+      window.localStorage.removeItem(key);
+      return null;
+    }
+    return entry.value;
+  } catch (e) {
+    return null;
+  }
+}
+
+function _storageSet(key, value, ttl) {
+  try {
+    if (!window.localStorage) return;
+    window.localStorage.setItem(key, JSON.stringify({ value, ts: Date.now(), ttl }));
+  } catch (e) {
+    // localStorage can be unavailable in private browsing; in-memory cache still works.
+  }
+}
+
+function _storageClear(key) {
+  try {
+    if (window.localStorage) window.localStorage.removeItem(key);
+  } catch (e) {
+    // Ignore storage cleanup errors; they should not block app use.
+  }
+}
+
 function _cacheClear(key) {
   if (key) {
     delete _cache[key];
+    if (key === 'config') _storageClear(_CONFIG_STORAGE_KEY);
   } else {
     Object.keys(_cache).forEach(k => delete _cache[k]);
+    _storageClear(_CONFIG_STORAGE_KEY);
   }
+}
+
+function _cacheClearPrefix(prefix) {
+  Object.keys(_cache).forEach(k => {
+    if (k.startsWith(prefix)) _cacheClear(k);
+  });
+}
+
+function apiGetCachedConfig() {
+  return _cacheGet('config') || _storageGet(_CONFIG_STORAGE_KEY, _CONFIG_CACHE_TTL);
+}
+
+function apiClearDataCache() {
+  Object.keys(_cache).forEach(k => {
+    if (k !== 'config') delete _cache[k];
+  });
 }
 
 // Public alias — call apiClearCache() to invalidate everything,
@@ -100,11 +150,17 @@ async function apiPost(payload) {
 async function apiGetConfig(bustCache = false) {
   const key = 'config';
   if (!bustCache) {
-    const cached = _cacheGet(key);
-    if (cached) return cached;
+    const cached = apiGetCachedConfig();
+    if (cached) {
+      _cacheSet(key, cached, _CONFIG_CACHE_TTL);
+      return cached;
+    }
   }
   const data = await _post({ action: 'getConfig' });
-  _cacheSet(key, data, _CONFIG_CACHE_TTL); // config cached for the full session
+  const persistedConfig = { ...data };
+  delete persistedConfig.admin_pin;
+  _cacheSet(key, data, _CONFIG_CACHE_TTL);
+  _storageSet(_CONFIG_STORAGE_KEY, persistedConfig, _CONFIG_CACHE_TTL);
   return data;
 }
 
@@ -160,8 +216,16 @@ async function apiGetAllTenants(adminPin, bustCache = false) {
  * @param {string} loginCode  e.g. "JJ-04"
  * @param {string} [month]    YYYY-MM
  */
-async function apiGetTenantInfo(loginCode, month = null) {
-  return _post({ action: 'getTenantInfo', login_code: loginCode, month });
+async function apiGetTenantInfo(loginCode, month = null, bustCache = false) {
+  const normalizedCode = String(loginCode || '').toUpperCase();
+  const key = `tenantinfo:${normalizedCode}:${month || 'current'}`;
+  if (!bustCache) {
+    const cached = _cacheGet(key);
+    if (cached) return cached;
+  }
+  const data = await _post({ action: 'getTenantInfo', login_code: normalizedCode, month });
+  _cacheSet(key, data, 30 * 1000);
+  return data;
 }
 
 /**
@@ -295,7 +359,9 @@ async function apiSubmitPayment(loginCode, paymentData) {
     login_code: loginCode,
     ...paymentData
   });
-  _cacheClear(`payments:${loginCode}`);
+  const normalizedCode = String(loginCode || '').toUpperCase();
+  _cacheClear(`payments:${normalizedCode}`);
+  _cacheClearPrefix(`tenantinfo:${normalizedCode}:`);
   return data;
 }
 

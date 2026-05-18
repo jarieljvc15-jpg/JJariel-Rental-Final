@@ -153,6 +153,10 @@
 
     const dot  = document.getElementById('status-dot');
     const txt  = document.getElementById('status-text');
+    const cachedCfg = apiGetCachedConfig();
+
+    // Paint immediately, then hydrate from Apps Script if the local cache is cold.
+    applyPropertyName((cachedCfg && cachedCfg.property_name) || 'My Property', '');
 
     try {
       const cfg = await apiGetConfig();
@@ -162,15 +166,15 @@
 
       // Mark online
       dot.className  = 'status-dot online';
-      txt.textContent = 'Connected — select a portal above';
+      txt.textContent = cachedCfg ? 'Ready — select a portal above' : 'Connected — select a portal above';
 
     } catch (err) {
       // Config fetch failed — still show portals, just flag offline
       dot.className  = 'status-dot offline';
       txt.textContent = 'Could not reach property data. Check your connection.';
 
-      // Show placeholder name so page isn't blank
-      applyPropertyName('My Property', '');
+      // Keep the cached/default name so the page is usable while offline.
+      applyPropertyName((cachedCfg && cachedCfg.property_name) || 'My Property', '');
 
       console.error('Config fetch failed:', err);
     }
