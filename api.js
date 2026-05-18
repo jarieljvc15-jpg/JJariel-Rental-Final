@@ -16,7 +16,7 @@ const GAS_URL = 'https://script.google.com/macros/s/AKfycbwdpGB9qQHIWh5V5EPdcSHu
 // waiting for Google Apps Script / Sheets. Operational data remains in-memory.
 // ---------------------------------------------------------------------------
 const _cache = {};
-const _CACHE_TTL_MS      = 60 * 1000;             // 60 s for most data
+const _CACHE_TTL_MS      = 5 * 60 * 1000;         // 5 min for read-heavy admin tabs
 const _CONFIG_CACHE_TTL  = 24 * 60 * 60 * 1000;  // config: 24 h across reloads
 const _CONFIG_STORAGE_KEY = 'jjrms:config:v1';
 
@@ -193,6 +193,25 @@ async function apiGetDashboard(adminPin, month = null, bustCache = false) {
   return data;
 }
 
+
+/**
+ * Returns collection-vs-billing chart data for the dashboard.
+ * Admin only.
+ * @param {string} adminPin
+ * @param {'daily'|'weekly'|'monthly'} mode
+ * @param {boolean} [bustCache]
+ */
+async function apiGetCollectionStats(adminPin, mode = 'daily', bustCache = false) {
+  const key = `collection:${mode}`;
+  if (!bustCache) {
+    const cached = _cacheGet(key);
+    if (cached) return cached;
+  }
+  const data = await _post({ action: 'getCollectionStats', admin_pin: adminPin, mode });
+  _cacheSet(key, data);
+  return data;
+}
+
 // ── Tenants ──────────────────────────────────────────────────────────────────
 
 /**
@@ -237,6 +256,7 @@ async function apiAddTenant(adminPin, tenantData) {
   const data = await _post({ action: 'addTenant', admin_pin: adminPin, ...tenantData });
   _cacheClear('tenants');
   _cacheClear('dashboard');
+  _cacheClearPrefix('collection:');
   return data;
 }
 
@@ -249,6 +269,7 @@ async function apiUpdateTenant(adminPin, tenantData) {
   const data = await _post({ action: 'updateTenant', admin_pin: adminPin, ...tenantData });
   _cacheClear('tenants');
   _cacheClear('dashboard');
+  _cacheClearPrefix('collection:');
   return data;
 }
 
@@ -289,6 +310,7 @@ async function apiEnterMeterReadings(adminPin, month, readings) {
   Object.keys(_cache).forEach(k => { if (k.startsWith('billing:')) _cacheClear(k); });
   _cacheClear('ledger');
   _cacheClear('dashboard');
+  _cacheClearPrefix('collection:');
   return data;
 }
 
@@ -380,6 +402,7 @@ async function apiLogPayment(adminPin, paymentData) {
   _cacheClear(`billing:${paymentData.tenant_id}`);
   _cacheClear('ledger');
   _cacheClear('dashboard');
+  _cacheClearPrefix('collection:');
   _cacheClear('pending');
   _cacheClear('all_payments');
   return data;
@@ -418,6 +441,7 @@ async function apiLogFlexiblePayment(adminPin, paymentData) {
   _cacheClear(`billing:${paymentData.tenant_id}`);
   _cacheClear('ledger');
   _cacheClear('dashboard');
+  _cacheClearPrefix('collection:');
   _cacheClear('pending');
   _cacheClear('all_payments');
   return data;
@@ -439,6 +463,7 @@ async function apiApprovePayment(adminPin, paymentId, note = '') {
   _cacheClear('pending');
   _cacheClear('ledger');
   _cacheClear('dashboard');
+  _cacheClearPrefix('collection:');
   _cacheClear('all_payments');
   Object.keys(_cache).forEach(k => {
     if (k.startsWith('payments:') || k.startsWith('billing:')) _cacheClear(k);
@@ -461,6 +486,7 @@ async function apiRejectPayment(adminPin, paymentId, note = '') {
   });
   _cacheClear('pending');
   _cacheClear('dashboard');
+  _cacheClearPrefix('collection:');
   return data;
 }
 

@@ -21,6 +21,13 @@ let _currentReceiptPaymentId = null;
 let _chartMode = 'daily';
 let _chartData = null;
 
+const _prefetched = {
+  tenants:     false,
+  pending:     false,
+  allPayments: false,
+  ledger:      false,
+};
+
 const _loaded = {
   dashboard:    false,
   tenants:      false,
@@ -124,6 +131,7 @@ async function attemptLogin() {
       document.getElementById('app-shell').classList.remove('hidden');
       pinInput.value = '';
       await loadDashboard();
+      warmAdminTabCaches();
     } else {
       loginErr.classList.remove('hidden');
       pinInput.value = '';
@@ -148,10 +156,43 @@ function logout() {
   _txnFiltered     = [];
   apiClearDataCache();
   Object.keys(_loaded).forEach(k => _loaded[k] = false);
+  Object.keys(_prefetched).forEach(k => _prefetched[k] = false);
   document.getElementById('app-shell').classList.add('hidden');
   document.getElementById('login-screen').classList.remove('hidden');
   document.getElementById('pin-input').value = '';
   switchTab('dashboard');
+}
+
+
+function warmAdminTabCaches() {
+  if (!_pin) return;
+
+  // Start loading the slower tabs in the background after sign-in. Each API
+  // helper writes to the shared in-memory cache, so the first visit to Tenants,
+  // Billing, Payments, All Transactions, or Ledger can render from cache instead
+  // of waiting on a fresh Apps Script / Sheets round-trip.
+  Promise.allSettled([
+    apiGetAllTenants(_pin).then(function (rows) {
+      _tenants = rows;
+      _prefetched.tenants = true;
+    }),
+    apiGetPendingPayments(_pin).then(function (rows) {
+      _pendingPayments = rows;
+      _prefetched.pending = true;
+    }),
+    apiGetAllPayments(_pin).then(function (rows) {
+      _allPayments = rows;
+      _allTransactions = rows;
+      _prefetched.allPayments = true;
+    }),
+    apiGetLedger(_pin).then(function (data) {
+      _ledgerData = data;
+      _prefetched.ledger = true;
+    }),
+    apiGetCollectionStats(_pin, _chartMode)
+  ]).catch(function () {
+    // Prefetch is best-effort; visible tab loaders still show real errors.
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +337,12 @@ function renderRecentPayments(rows) {
 // ---------------------------------------------------------------------------
 async function loadTenants(bustCache = false) {
   const el = document.getElementById('tenants-list');
+  if (!bustCache && _prefetched.tenants) {
+    renderTenants();
+    _loaded.tenants = true;
+    return;
+  }
+
   showSkeleton(el, 3);
   try {
     _tenants = await apiGetAllTenants(_pin, bustCache);
@@ -1019,6 +1066,13 @@ function closeDrawer() {
 // ---------------------------------------------------------------------------
 async function loadTransactionsTab(bustCache = false) {
   const wrap = document.getElementById('txn-table-wrap');
+  if (!bustCache && _prefetched.allPayments) {
+    _txnFiltered = _allTransactions;
+    filterTransactions();
+    _loaded.transactions = true;
+    return;
+  }
+
   wrap.innerHTML = '<div class="skeleton-line" style="margin:16px"></div><div class="skeleton-line" style="margin:16px;width:80%"></div>';
 
   try {
@@ -1169,11 +1223,7 @@ async function loadCollectionStats(mode, bustCache = false) {
   if (wrap) wrap.innerHTML = '<div class="skeleton-line" style="margin:12px"></div>';
 
   try {
-    const data = await apiPost({
-      action:    'getCollectionStats',
-      admin_pin: _pin,
-      mode:      _chartMode
-    });
+    const data = await apiGetCollectionStats(_pin, _chartMode, bustCache);
     _chartData = data;
     renderChart(data.periods);
     renderChartTable(data.periods);
@@ -1289,6 +1339,13 @@ function renderChartTable(periods) {
 async function loadLedger(bustCache = false) {
   const sumEl  = document.getElementById('ledger-summary');
   const listEl = document.getElementById('ledger-list');
+  if (!bustCache && _prefetched.ledger && _ledgerData) {
+    renderLedgerSummary(_ledgerData.summary);
+    renderLedger();
+    _loaded.ledger = true;
+    return;
+  }
+
   showSkeleton(sumEl, 3);
   showSkeleton(listEl, 4);
 
