@@ -41,13 +41,7 @@ const _loaded = {
     applyPropertyName('Property', 'Admin Portal');
   }
 
-  try {
-    _cfg = await apiGetConfig();
-    applyPropertyName(_cfg.property_name || 'Property', 'Admin Portal');
-  } catch (e) {
-    // Keep cached/default branding; login will show a connection error if needed.
-  }
-
+  // Wire the login button BEFORE awaiting the network — so it's never frozen
   const pinInput = document.getElementById('pin-input');
   const loginBtn = document.getElementById('login-btn');
 
@@ -99,6 +93,12 @@ const _loaded = {
   document.getElementById('btn-export-csv').addEventListener('click', exportTransactionsCSV);
 
   document.getElementById('btn-add-tenant').addEventListener('click', openAddTenant);
+
+  // Fetch fresh config in background (warms up GAS) — not awaited so it never blocks the UI
+  apiGetConfig().then(cfg => {
+    _cfg = cfg;
+    applyPropertyName(cfg.property_name || 'Property', 'Admin Portal');
+  }).catch(() => {});
 })();
 
 // ---------------------------------------------------------------------------
@@ -112,18 +112,26 @@ async function attemptLogin() {
 
   if (!entered) { pinInput.focus(); return; }
 
-  setBtnLoading(loginBtn, true, 'Checking…');
+  setBtnLoading(loginBtn, true, apiGetCachedConfig() ? 'Checking…' : 'Connecting…');
   loginErr.classList.add('hidden');
 
   try {
-    _cfg = await apiGetConfig(true);
+    // Use cached config — it was fetched (and GAS warmed up) during page boot.
+    // Forcing a fresh fetch here caused a full GAS round-trip on every login attempt.
+    // The PIN is still validated server-side on every write operation.
+    _cfg = await apiGetConfig();
 
     if (entered === String(_cfg.admin_pin)) {
       _pin = entered;
       document.getElementById('login-screen').classList.add('hidden');
       document.getElementById('app-shell').classList.remove('hidden');
       pinInput.value = '';
-      await loadDashboard();
+
+      // Load dashboard and pre-warm tenants cache in parallel so tab switches are instant
+      await Promise.all([
+        loadDashboard(),
+        apiGetAllTenants(_pin).catch(() => {})
+      ]);
     } else {
       loginErr.classList.remove('hidden');
       pinInput.value = '';
