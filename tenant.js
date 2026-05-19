@@ -32,14 +32,7 @@ const _loaded = {
     applyPropertyName('Property', 'Tenant Portal');
   }
 
-  try {
-    _cfg = await apiGetConfig();
-    applyPropertyName(_cfg.property_name || 'Property', 'Tenant Portal');
-  } catch (e) {
-    // Keep cached/default branding; login will show a connection error if needed.
-  }
-
-  // Wire login
+  // Wire login button BEFORE awaiting the network — so it's never frozen
   const codeInput = document.getElementById('code-input');
   const loginBtn  = document.getElementById('login-btn');
 
@@ -68,6 +61,12 @@ const _loaded = {
 
   // Default date fields to today
   document.getElementById('pay-date').value = getTodayDate();
+
+  // Fetch fresh config in background (warms up GAS) — not awaited so it never blocks the UI
+  apiGetConfig().then(cfg => {
+    _cfg = cfg;
+    applyPropertyName(cfg.property_name || 'Property', 'Tenant Portal');
+  }).catch(() => {});
 })();
 
 // ---------------------------------------------------------------------------
@@ -81,7 +80,7 @@ async function attemptLogin() {
 
   if (!code) { codeInput.focus(); return; }
 
-  setBtnLoading(loginBtn, true, 'Checking…');
+  setBtnLoading(loginBtn, true, apiGetCachedConfig() ? 'Checking…' : 'Connecting…');
   loginErr.classList.add('hidden');
 
   try {
@@ -96,7 +95,12 @@ async function attemptLogin() {
     document.getElementById('topbar-unit').textContent = info.tenant.unit || '';
 
     codeInput.value = '';
-    await loadHome();
+
+    // Load home tab and pre-warm history cache in parallel so tab switches are instant
+    await Promise.all([
+      loadHome(),
+      apiGetPaymentHistory({ login_code: code }).catch(() => {})
+    ]);
 
   } catch (e) {
     loginErr.classList.remove('hidden');

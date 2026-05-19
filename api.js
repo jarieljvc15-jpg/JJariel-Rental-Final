@@ -126,6 +126,20 @@ async function _post(payload) {
   return json.data;
 }
 
+// Fire-and-forget warm-up: kick GAS awake as early as possible so the cold-start
+// delay is absorbed in the background before the user clicks any button.
+// Call this once per page load; it's a no-op if config is already cached.
+function apiWarmUp() {
+  if (apiGetCachedConfig()) return; // already warm
+  _post({ action: 'getConfig' }).then(data => {
+    if (!data) return;
+    const safe = { ...data };
+    delete safe.admin_pin;
+    _cacheSet('config', data, _CONFIG_CACHE_TTL);
+    _storageSet(_CONFIG_STORAGE_KEY, safe, _CONFIG_CACHE_TTL);
+  }).catch(() => {});
+}
+
 // Public wrapper for one-off actions that don't need dedicated functions.
 // Never caches. Usage: await apiPost({ action: 'myAction', admin_pin: pin, ...fields })
 async function apiPost(payload) {

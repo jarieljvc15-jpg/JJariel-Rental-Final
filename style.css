@@ -1523,3 +1523,23 @@ dialog::backdrop {
   .quick-actions { grid-template-columns: repeat(3, 1fr); gap: var(--sp-md); }
   .quick-btn { padding: var(--sp-lg) var(--sp-md); font-size: .8rem; }
 }
+
+/* ---------------------------------------------------------------------------
+   BUTTON SPINNER — appears on .btn:disabled with loading text
+   --------------------------------------------------------------------------- */
+.btn:disabled::before {
+  content: '';
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: btn-spin .65s linear infinite;
+  margin-right: var(--sp-sm);
+  flex-shrink: 0;
+}
+
+@keyframes btn-spin {
+  to { transform: rotate(360deg); }
+}
