@@ -116,10 +116,11 @@ async function attemptLogin() {
   loginErr.classList.add('hidden');
 
   try {
-    // Use cached config — it was fetched (and GAS warmed up) during page boot.
-    // Forcing a fresh fetch here caused a full GAS round-trip on every login attempt.
-    // The PIN is still validated server-side on every write operation.
+    // Use cached config if it includes admin_pin (in-memory cache does; localStorage does not).
+    // If admin_pin is absent, force a fresh fetch to get it. This avoids a redundant GAS call
+    // on warm sessions while still working correctly on first load / after page refresh.
     _cfg = await apiGetConfig();
+    if (!_cfg.admin_pin) _cfg = await apiGetConfig(true);
 
     if (entered === String(_cfg.admin_pin)) {
       _pin = entered;
